@@ -108,7 +108,7 @@ export class RagService {
         // 7. 각 청크에 대해 임베딩 생성 및 저장
         for (let i = 0; i < chunks.length; i++) {
           const chunk = chunks[i];
-          const embedding = await this.openaiService.getEmbedding(chunk);
+          const { embedding } = await this.openaiService.getEmbedding(chunk);
 
           // 8. Qdrant에 저장 (UUID 생성)
           const pointId = randomUUID();
@@ -394,16 +394,32 @@ export class RagService {
     conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
   ) {
     try {
+      // 토큰 사용량 추적을 위한 변수 초기화
+      let totalUsage = {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      };
+
       // 1. LLM을 사용하여 질문을 검색에 최적화된 쿼리로 재작성
       this.logger.log(`원본 질문: "${question}"`);
-      const rewrittenQuery = await this.openaiService.rewriteQueryForSearch(
+      const { rewrittenQuery, usage: rewriteUsage } = await this.openaiService.rewriteQueryForSearch(
         question,
         conversationHistory,
       );
       this.logger.log(`재작성된 검색 쿼리: "${rewrittenQuery}"`);
+      
+      // 토큰 사용량 합산
+      totalUsage.promptTokens += rewriteUsage.promptTokens;
+      totalUsage.completionTokens += rewriteUsage.completionTokens;
+      totalUsage.totalTokens += rewriteUsage.totalTokens;
 
       // 2. 재작성된 쿼리에 대한 임베딩 생성
-      const embedding = await this.openaiService.getEmbedding(rewrittenQuery);
+      const { embedding, usage: embeddingUsage } = await this.openaiService.getEmbedding(rewrittenQuery);
+      
+      // 토큰 사용량 합산
+      totalUsage.promptTokens += embeddingUsage.promptTokens;
+      totalUsage.totalTokens += embeddingUsage.totalTokens;
 
       // 3. Qdrant에서 유사한 청크 검색 (상위 10개로 증가하여 더 많은 컨텍스트 확보)
       const searchResult = await this.qdrantService.search(
@@ -471,11 +487,16 @@ export class RagService {
       );
 
       // 8. LLM을 사용하여 문서 기반 답변 생성
-      const { answer, usage } = await this.openaiService.generateAnswer(
+      const { answer, usage: answerUsage } = await this.openaiService.generateAnswer(
         question,
         contextDocuments,
         conversationHistory,
       );
+      
+      // 토큰 사용량 합산
+      totalUsage.promptTokens += answerUsage.promptTokens;
+      totalUsage.completionTokens += answerUsage.completionTokens;
+      totalUsage.totalTokens += answerUsage.totalTokens;
 
       // 9. 답변에서 실제로 사용된 문서 인덱스 추출
       const usedDocumentIndices = this.extractUsedDocumentIndices(answer);
@@ -516,7 +537,7 @@ export class RagService {
         sources,
         question,
         rewrittenQuery, // 재작성된 쿼리도 반환하여 디버깅/모니터링에 유용
-        usage,
+        usage: totalUsage, // 모든 LLM 호출의 토큰 사용량 합산
       };
     } catch (error) {
       this.logger.error(`Failed to process query: ${(error as Error).message}`);

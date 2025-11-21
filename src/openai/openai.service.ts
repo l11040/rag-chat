@@ -19,13 +19,23 @@ export class OpenAIService {
     });
   }
 
-  async getEmbedding(text: string): Promise<number[]> {
+  async getEmbedding(text: string): Promise<{ embedding: number[]; usage: { promptTokens: number; totalTokens: number } }> {
     try {
       const response = await this.openai.embeddings.create({
         model: 'text-embedding-3-small',
         input: text,
       });
-      return response.data[0].embedding;
+      const usage = response.usage || {
+        prompt_tokens: 0,
+        total_tokens: 0,
+      };
+      return {
+        embedding: response.data[0].embedding,
+        usage: {
+          promptTokens: usage.prompt_tokens,
+          totalTokens: usage.total_tokens,
+        },
+      };
     } catch (error) {
       this.logger.error(
         `Failed to generate embedding: ${(error as Error).message}`,
@@ -41,7 +51,7 @@ export class OpenAIService {
   async rewriteQueryForSearch(
     question: string,
     conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
-  ): Promise<string> {
+  ): Promise<{ rewrittenQuery: string; usage: { promptTokens: number; completionTokens: number; totalTokens: number } }> {
     try {
       const systemPrompt = `당신은 사용자의 질문을 벡터 검색에 최적화된 검색 쿼리로 변환하는 전문가입니다.
 
@@ -96,16 +106,35 @@ ${historyText}
       });
 
       const rewrittenQuery = response.choices[0]?.message?.content?.trim() || question;
+      const usage = response.usage || {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+      };
       
       this.logger.log(`쿼리 재작성: "${question}" -> "${rewrittenQuery}"`);
       
-      return rewrittenQuery;
+      return {
+        rewrittenQuery,
+        usage: {
+          promptTokens: usage.prompt_tokens,
+          completionTokens: usage.completion_tokens,
+          totalTokens: usage.total_tokens,
+        },
+      };
     } catch (error) {
       this.logger.error(
         `Failed to rewrite query: ${(error as Error).message}`,
       );
       // 에러 발생 시 원본 질문 반환
-      return question;
+      return {
+        rewrittenQuery: question,
+        usage: {
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+        },
+      };
     }
   }
 
