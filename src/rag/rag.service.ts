@@ -440,6 +440,7 @@ export class RagService {
       const { answer, usage } = await this.openaiService.generateAnswer(
         question,
         contextDocuments,
+        conversationHistory,
       );
 
       // 9. 인용된 문서 정보 포함하여 반환

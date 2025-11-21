@@ -112,6 +112,7 @@ ${historyText}
   async generateAnswer(
     question: string,
     contextDocuments: Array<{ text: string; pageTitle: string; pageUrl: string }>,
+    conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
   ): Promise<{ answer: string; usage: { promptTokens: number; completionTokens: number; totalTokens: number } }> {
     try {
       // 문서 컨텍스트를 문자열로 변환
@@ -157,7 +158,7 @@ ${historyText}
         answerGuidance = '\n\n중요: 방법을 물어봤으므로, 단계별로 번호를 매겨 간결하게 설명하세요.';
       }
 
-      const userPrompt = `다음 문서들을 참고하여 질문에 답변해주세요:
+      let userPrompt = `다음 문서들을 참고하여 질문에 답변해주세요:
 
 ${contextText}
 
@@ -167,12 +168,28 @@ ${contextText}
 - 불필요한 설명은 모두 제거하고 핵심만 전달하세요.
 - 예시가 요청되었다면 코드 블록으로 명확하게 보여주세요.`;
 
+      // 대화 히스토리가 있으면 메시지에 포함
+      const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+        { role: 'system', content: systemPrompt },
+      ];
+
+      // 대화 히스토리 추가 (최근 5개만)
+      if (conversationHistory && conversationHistory.length > 0) {
+        const recentHistory = conversationHistory.slice(-5);
+        for (const msg of recentHistory) {
+          messages.push({
+            role: msg.role === 'user' ? 'user' : 'assistant',
+            content: msg.content,
+          });
+        }
+      }
+
+      // 현재 질문 추가
+      messages.push({ role: 'user', content: userPrompt });
+
       const response = await this.openai.chat.completions.create({
         model: 'gpt-3.5-turbo',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
+        messages: messages,
         temperature: 0.3, // 일관성 있는 답변을 위해 낮은 temperature
         max_tokens: 1000,
       });
