@@ -16,6 +16,37 @@ export class QdrantService implements OnModuleInit {
     }
   }
 
+  async createCollection(collectionName: string, vectorSize: number) {
+    try {
+      const result = await this.qdrantClient.createCollection(collectionName, {
+        vectors: {
+          size: vectorSize,
+          distance: 'Cosine',
+        },
+      });
+      return result;
+    } catch {
+      // If collection already exists, ignore error
+      console.log(`Collection ${collectionName} might already exist.`);
+      return null;
+    }
+  }
+
+  async upsertPoints(collectionName: string, points: any[]) {
+    return await this.qdrantClient.upsert(collectionName, {
+      wait: true,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      points: points as any,
+    });
+  }
+
+  async search(collectionName: string, vector: number[]) {
+    return await this.qdrantClient.search(collectionName, {
+      vector: vector,
+      limit: 3,
+    });
+  }
+
   getClient(): QdrantClient {
     return this.qdrantClient;
   }

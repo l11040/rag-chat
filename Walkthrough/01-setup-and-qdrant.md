@@ -48,6 +48,48 @@ curl localhost:6333/collections
 
 - 응답: `{"result":{"collections":[],"time":0.0}}` (정상)
 
+### 4. CRUD 기능 테스트
+
+`QdrantService`에 컬렉션 생성, 데이터 삽입, 검색 기능을 추가하고 테스트 엔드포인트를 통해 검증했습니다.
+
+**데이터 삽입**
+
+```bash
+curl -X POST localhost:3001/qdrant/test
+```
+
+- 응답: `{"message":"Test data inserted"}`
+
+**데이터 검색**
+
+```bash
+curl localhost:3001/qdrant/search
+```
+
+- 응답:
+  ```json
+  [
+    {
+      "id": 1,
+      "version": 1,
+      "score": 0.89463294,
+      "payload": { "city": "Berlin" }
+    },
+    {
+      "id": 3,
+      "version": 1,
+      "score": 0.83872515,
+      "payload": { "city": "Moscow" }
+    },
+    {
+      "id": 2,
+      "version": 1,
+      "score": 0.66603535,
+      "payload": { "city": "London" }
+    }
+  ]
+  ```
+
 ## 파일 구조
 
 ```
@@ -56,10 +98,11 @@ rag-chat/
 ├── test-env
 ├── .env
 ├── src/
+│   ├── app.controller.ts  <-- 테스트 엔드포인트 추가
 │   ├── app.module.ts
 │   ├── main.ts
 │   └── qdrant/
 │       ├── qdrant.module.ts
-│       └── qdrant.service.ts
+│       └── qdrant.service.ts <-- CRUD 메서드 추가
 └── ...
 ```
