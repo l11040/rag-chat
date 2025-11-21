@@ -250,6 +250,40 @@ export class RagService {
   }
 
   /**
+   * LLM 답변에서 실제로 사용된 문서 번호 추출
+   * "[문서 1]", "[문서 2]" 같은 패턴을 찾아서 Set으로 반환
+   */
+  private extractUsedDocumentIndices(answer: string): Set<number> {
+    const usedIndices = new Set<number>();
+    
+    // "[문서 N]" 패턴 찾기 (N은 숫자)
+    const documentPattern = /\[문서\s*(\d+)\]/g;
+    let match;
+    
+    while ((match = documentPattern.exec(answer)) !== null) {
+      const docIndex = parseInt(match[1], 10);
+      if (!isNaN(docIndex)) {
+        usedIndices.add(docIndex);
+      }
+    }
+    
+    // 만약 인용이 하나도 없으면, 모든 문서를 사용한 것으로 간주 (하위 호환성)
+    // 하지만 실제로는 답변이 생성되었다는 것은 최소한 일부 문서가 사용되었다는 의미
+    // 따라서 인용이 없어도 답변이 생성되었다면, 상위 점수 문서들만 사용한 것으로 간주
+    if (usedIndices.size === 0) {
+      // 인용이 없으면 상위 3개 문서를 사용한 것으로 간주
+      // (실제로는 LLM이 인용 없이 답변을 생성했을 수 있으므로)
+      this.logger.warn('답변에서 문서 인용을 찾을 수 없습니다. 상위 문서들을 사용한 것으로 간주합니다.');
+      // 빈 Set을 반환하면 필터링에서 모든 문서가 제외되므로, 최소한 상위 문서는 포함
+      // 하지만 이 경우는 실제로 사용 여부를 알 수 없으므로, 모든 문서를 반환하지 않고
+      // 상위 점수 문서만 반환하는 것이 더 나을 수 있습니다.
+      // 일단 인용이 없으면 빈 Set을 반환하고, rag.service에서 처리하도록 합니다.
+    }
+    
+    return usedIndices;
+  }
+
+  /**
    * Qdrant 컬렉션 정보 조회
    */
   async getCollectionInfo() {
@@ -443,13 +477,38 @@ export class RagService {
         conversationHistory,
       );
 
-      // 9. 인용된 문서 정보 포함하여 반환
-      const sources = results.map((result) => ({
-        pageTitle: result.payload.pageTitle || 'Unknown',
-        pageUrl: result.payload.pageUrl || '',
-        score: result.score,
-        chunkText: (result.payload.text || '').substring(0, 200) + '...', // 미리보기
-      }));
+      // 9. 답변에서 실제로 사용된 문서 인덱스 추출
+      const usedDocumentIndices = this.extractUsedDocumentIndices(answer);
+      
+      // 10. 실제로 사용된 문서만 필터링하여 반환
+      let sources;
+      if (usedDocumentIndices.size > 0) {
+        // 인용된 문서가 있으면 해당 문서만 반환
+        sources = results
+          .filter((_, index) => usedDocumentIndices.has(index + 1)) // 문서 번호는 1부터 시작
+          .map((result) => ({
+            pageTitle: result.payload.pageTitle || 'Unknown',
+            pageUrl: result.payload.pageUrl || '',
+            score: result.score,
+            chunkText: (result.payload.text || '').substring(0, 200) + '...', // 미리보기
+          }));
+        this.logger.log(
+          `답변에 실제로 사용된 문서: ${usedDocumentIndices.size}개 (전체 검색 결과: ${results.length}개)`,
+        );
+      } else {
+        // 인용이 없으면 상위 점수 문서 3개만 반환 (실제로 사용되었을 가능성이 높음)
+        sources = results
+          .slice(0, 3)
+          .map((result) => ({
+            pageTitle: result.payload.pageTitle || 'Unknown',
+            pageUrl: result.payload.pageUrl || '',
+            score: result.score,
+            chunkText: (result.payload.text || '').substring(0, 200) + '...', // 미리보기
+          }));
+        this.logger.log(
+          `답변에서 문서 인용을 찾을 수 없어 상위 3개 문서를 반환합니다.`,
+        );
+      }
 
       return {
         success: true,
