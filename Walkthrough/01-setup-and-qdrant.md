@@ -90,6 +90,13 @@ curl localhost:3001/qdrant/search
   ]
   ```
 
+### 5. API 문서화 (Swagger)
+
+`@nestjs/swagger`를 적용하여 API 문서를 자동 생성하도록 설정했습니다.
+
+- **URL**: `http://localhost:3001/api`
+- **설정**: `nest-cli.json` 플러그인 활성화로 별도의 데코레이터 없이 DTO/엔드포인트 문서화
+
 ## 파일 구조
 
 ```
@@ -97,12 +104,13 @@ rag-chat/
 ├── docker-compose.yml
 ├── test-env
 ├── .env
+├── nest-cli.json      <-- Swagger 플러그인 추가
 ├── src/
-│   ├── app.controller.ts  <-- 테스트 엔드포인트 추가
+│   ├── app.controller.ts
 │   ├── app.module.ts
-│   ├── main.ts
+│   ├── main.ts        <-- Swagger 설정 추가
 │   └── qdrant/
 │       ├── qdrant.module.ts
-│       └── qdrant.service.ts <-- CRUD 메서드 추가
+│       └── qdrant.service.ts
 └── ...
 ```
