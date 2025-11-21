@@ -355,15 +355,27 @@ export class RagService {
       };
     }
   }
-  async query(question: string) {
+  async query(
+    question: string,
+    conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  ) {
     try {
-      // 1. 질문에 대한 임베딩 생성
-      const embedding = await this.openaiService.getEmbedding(question);
+      // 1. LLM을 사용하여 질문을 검색에 최적화된 쿼리로 재작성
+      this.logger.log(`원본 질문: "${question}"`);
+      const rewrittenQuery = await this.openaiService.rewriteQueryForSearch(
+        question,
+        conversationHistory,
+      );
+      this.logger.log(`재작성된 검색 쿼리: "${rewrittenQuery}"`);
 
-      // 2. Qdrant에서 유사한 청크 검색 (상위 5개)
+      // 2. 재작성된 쿼리에 대한 임베딩 생성
+      const embedding = await this.openaiService.getEmbedding(rewrittenQuery);
+
+      // 3. Qdrant에서 유사한 청크 검색 (상위 10개로 증가하여 더 많은 컨텍스트 확보)
       const searchResult = await this.qdrantService.search(
         this.COLLECTION_NAME,
         embedding,
+        10, // limit을 5에서 10으로 증가
       );
 
       // 3. 검색 결과 포맷팅 및 스코어 필터링
@@ -374,7 +386,7 @@ export class RagService {
       }));
 
       // 4. 최소 스코어 임계값 이상인 결과만 필터링
-      const results = allResults.filter(
+      let results = allResults.filter(
         (result) => result.score >= this.MIN_SCORE_THRESHOLD,
       );
 
@@ -382,11 +394,26 @@ export class RagService {
         `검색 결과: 전체 ${allResults.length}개, 필터링 후 ${results.length}개 (임계값: ${this.MIN_SCORE_THRESHOLD})`,
       );
 
-      // 5. 필터링 후 결과가 없으면 에러 반환
+      // 5. 필터링 후 결과가 없으면 임계값을 낮춰서 재시도
+      if (results.length === 0 && allResults.length > 0) {
+        const maxScore = allResults[0].score;
+        // 최고 점수가 0.25 이상이면 임계값을 낮춰서 재시도
+        if (maxScore >= 0.25) {
+          const loweredThreshold = Math.max(0.25, maxScore - 0.05);
+          results = allResults.filter(
+            (result) => result.score >= loweredThreshold,
+          );
+          this.logger.log(
+            `임계값을 ${this.MIN_SCORE_THRESHOLD}에서 ${loweredThreshold.toFixed(3)}으로 낮춰서 재시도: ${results.length}개 결과 발견`,
+          );
+        }
+      }
+
+      // 6. 여전히 결과가 없으면 에러 반환
       if (results.length === 0) {
         const maxScore = allResults.length > 0 ? allResults[0].score : 0;
         this.logger.warn(
-          `검색 결과가 임계값(${this.MIN_SCORE_THRESHOLD}) 미만입니다. 최고 점수: ${maxScore}`,
+          `검색 결과가 없습니다. 최고 점수: ${maxScore.toFixed(4)}`,
         );
         return {
           success: false,
@@ -394,10 +421,11 @@ export class RagService {
           sources: [],
           maxScore: maxScore,
           threshold: this.MIN_SCORE_THRESHOLD,
+          rewrittenQuery, // 재작성된 쿼리도 반환
         };
       }
 
-      // 6. 검색된 문서들을 LLM에 전달할 형식으로 변환
+      // 7. 검색된 문서들을 LLM에 전달할 형식으로 변환
       const contextDocuments = results.map((result) => ({
         text: result.payload.text || '',
         pageTitle: result.payload.pageTitle || 'Unknown',
@@ -408,13 +436,13 @@ export class RagService {
         `LLM 답변 생성 시작: ${results.length}개의 문서 청크 사용 (최고 점수: ${results[0].score.toFixed(3)})`,
       );
 
-      // 7. LLM을 사용하여 문서 기반 답변 생성
+      // 8. LLM을 사용하여 문서 기반 답변 생성
       const { answer, usage } = await this.openaiService.generateAnswer(
         question,
         contextDocuments,
       );
 
-      // 8. 인용된 문서 정보 포함하여 반환
+      // 9. 인용된 문서 정보 포함하여 반환
       const sources = results.map((result) => ({
         pageTitle: result.payload.pageTitle || 'Unknown',
         pageUrl: result.payload.pageUrl || '',
@@ -427,6 +455,7 @@ export class RagService {
         answer,
         sources,
         question,
+        rewrittenQuery, // 재작성된 쿼리도 반환하여 디버깅/모니터링에 유용
         usage,
       };
     } catch (error) {

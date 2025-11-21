@@ -15,12 +15,34 @@ class IngestDto {
   databaseId?: string;
 }
 
+class ConversationMessage {
+  @ApiProperty({
+    required: true,
+    description: '메시지 역할 (user 또는 assistant)',
+    enum: ['user', 'assistant'],
+  })
+  role: 'user' | 'assistant';
+
+  @ApiProperty({
+    required: true,
+    description: '메시지 내용',
+  })
+  content: string;
+}
+
 class QueryDto {
   @ApiProperty({
     required: true,
     description: '사용자 질문 문자열',
   })
   question: string;
+
+  @ApiProperty({
+    required: false,
+    description: '이전 대화 히스토리 (연속적인 대화를 위한 컨텍스트)',
+    type: [ConversationMessage],
+  })
+  conversationHistory?: ConversationMessage[];
 }
 
 @ApiTags('RAG')
@@ -46,7 +68,10 @@ export class RagController {
   @ApiOperation({ summary: '질문에 대한 LLM 기반 답변 생성 (문서 기반)' })
   @ApiResponse({ status: 200, description: 'LLM이 생성한 답변과 인용된 문서 정보 반환' })
   async query(@Body() body: QueryDto) {
-    const result = await this.ragService.query(body.question);
+    const result = await this.ragService.query(
+      body.question,
+      body.conversationHistory,
+    );
     return result;
   }
 
