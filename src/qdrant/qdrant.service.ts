@@ -40,10 +40,10 @@ export class QdrantService implements OnModuleInit {
     });
   }
 
-  async search(collectionName: string, vector: number[]) {
+  async search(collectionName: string, vector: number[], limit: number = 5) {
     return await this.qdrantClient.search(collectionName, {
       vector: vector,
-      limit: 3,
+      limit: limit,
     });
   }
 

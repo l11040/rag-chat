@@ -43,8 +43,8 @@ export class RagController {
   }
 
   @Post('query')
-  @ApiOperation({ summary: '질문에 대한 유사 청크 검색' })
-  @ApiResponse({ status: 200, description: '검색 결과 반환' })
+  @ApiOperation({ summary: '질문에 대한 LLM 기반 답변 생성 (문서 기반)' })
+  @ApiResponse({ status: 200, description: 'LLM이 생성한 답변과 인용된 문서 정보 반환' })
   async query(@Body() body: QueryDto) {
     const result = await this.ragService.query(body.question);
     return result;

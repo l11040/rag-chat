@@ -6,7 +6,7 @@ import { QdrantService } from '../qdrant/qdrant.service';
 import { randomUUID } from 'crypto';
 
 // Define the shape of a Qdrant search result
-interface SearchResult {
+export interface SearchResult {
   id: string | number;
   score: number;
   payload: any;
@@ -30,6 +30,7 @@ export class RagService {
   private readonly VECTOR_SIZE = 1536; // text-embedding-3-small 차원
   private readonly CHUNK_SIZE = 1000; // 청크 크기 (문자 수)
   private readonly CHUNK_OVERLAP = 200; // 청크 오버랩
+  private readonly MIN_SCORE_THRESHOLD = 0.35; // 최소 유사도 점수 (Cosine similarity)
 
   constructor(
     private readonly notionService: NotionService,
@@ -355,20 +356,88 @@ export class RagService {
     }
   }
   async query(question: string) {
-    // Generate embedding for the question
-    const embedding = await this.openaiService.getEmbedding(question);
+    try {
+      // 1. 질문에 대한 임베딩 생성
+      const embedding = await this.openaiService.getEmbedding(question);
 
-    // Search Qdrant for similar chunks
-    const searchResult = await this.qdrantService.search(this.COLLECTION_NAME, embedding);
+      // 2. Qdrant에서 유사한 청크 검색 (상위 5개)
+      const searchResult = await this.qdrantService.search(
+        this.COLLECTION_NAME,
+        embedding,
+      );
 
-    // Format the results with proper typing
-    const results: SearchResult[] = (searchResult || []).map((item: any) => ({
-      id: item.id,
-      score: item.score,
-      payload: item.payload,
-    }));
+      // 3. 검색 결과 포맷팅 및 스코어 필터링
+      const allResults: SearchResult[] = (searchResult || []).map((item: any) => ({
+        id: item.id,
+        score: item.score,
+        payload: item.payload,
+      }));
 
-    return { success: true, results };
+      // 4. 최소 스코어 임계값 이상인 결과만 필터링
+      const results = allResults.filter(
+        (result) => result.score >= this.MIN_SCORE_THRESHOLD,
+      );
+
+      this.logger.log(
+        `검색 결과: 전체 ${allResults.length}개, 필터링 후 ${results.length}개 (임계값: ${this.MIN_SCORE_THRESHOLD})`,
+      );
+
+      // 5. 필터링 후 결과가 없으면 에러 반환
+      if (results.length === 0) {
+        const maxScore = allResults.length > 0 ? allResults[0].score : 0;
+        this.logger.warn(
+          `검색 결과가 임계값(${this.MIN_SCORE_THRESHOLD}) 미만입니다. 최고 점수: ${maxScore}`,
+        );
+        return {
+          success: false,
+          answer: '제공된 문서에는 이 질문에 대한 충분히 관련성 있는 정보가 없습니다.',
+          sources: [],
+          maxScore: maxScore,
+          threshold: this.MIN_SCORE_THRESHOLD,
+        };
+      }
+
+      // 6. 검색된 문서들을 LLM에 전달할 형식으로 변환
+      const contextDocuments = results.map((result) => ({
+        text: result.payload.text || '',
+        pageTitle: result.payload.pageTitle || 'Unknown',
+        pageUrl: result.payload.pageUrl || '',
+      }));
+
+      this.logger.log(
+        `LLM 답변 생성 시작: ${results.length}개의 문서 청크 사용 (최고 점수: ${results[0].score.toFixed(3)})`,
+      );
+
+      // 7. LLM을 사용하여 문서 기반 답변 생성
+      const { answer, usage } = await this.openaiService.generateAnswer(
+        question,
+        contextDocuments,
+      );
+
+      // 8. 인용된 문서 정보 포함하여 반환
+      const sources = results.map((result) => ({
+        pageTitle: result.payload.pageTitle || 'Unknown',
+        pageUrl: result.payload.pageUrl || '',
+        score: result.score,
+        chunkText: (result.payload.text || '').substring(0, 200) + '...', // 미리보기
+      }));
+
+      return {
+        success: true,
+        answer,
+        sources,
+        question,
+        usage,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to process query: ${(error as Error).message}`);
+      return {
+        success: false,
+        answer: '답변 생성 중 오류가 발생했습니다.',
+        error: (error as Error).message,
+        sources: [],
+      };
+    }
   }
 }
 
