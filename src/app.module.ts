@@ -4,6 +4,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { QdrantModule } from './qdrant/qdrant.module';
 import { NotionModule } from './notion/notion.module';
+import { OpenAIModule } from './openai/openai.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { NotionModule } from './notion/notion.module';
     }),
     QdrantModule,
     NotionModule,
+    OpenAIModule,
   ],
   controllers: [AppController],
   providers: [AppService],

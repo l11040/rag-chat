@@ -27,6 +27,7 @@
     "@nestjs/swagger": "^11.2.3",
     "@notionhq/client": "^5.4.0",
     "@qdrant/js-client-rest": "^1.16.0",
+    "openai": "^6.9.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "swagger-ui-express": "^5.0.1"
