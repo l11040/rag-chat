@@ -25,6 +25,7 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/swagger": "^11.2.3",
+    "@notionhq/client": "^5.4.0",
     "@qdrant/js-client-rest": "^1.16.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
