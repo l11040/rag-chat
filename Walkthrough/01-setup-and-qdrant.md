@@ -1,0 +1,65 @@
+# NestJS 기본 구성 및 Qdrant 연동
+
+## 개요
+
+NestJS 프로젝트를 초기화하고, Vector DB인 Qdrant를 Docker로 구성하여 연동했습니다.
+
+## 작업 내용
+
+### 1. NestJS 프로젝트 설정
+
+- **초기화**: `@nestjs/cli`를 사용하여 프로젝트 생성
+- **포트 변경**: 기본 포트 3000번 충돌로 인해 **3001**번으로 변경 (`src/main.ts`)
+
+### 2. Qdrant Vector DB 구성
+
+- **Docker Compose**: `docker-compose.yml` 파일 생성
+  - 이미지: `qdrant/qdrant`
+  - 포트: 6333 (Host) <-> 6333 (Container)
+  - 볼륨: `./qdrant_storage` (데이터 영속성)
+- **환경 변수**: `test-env` 예시 파일 생성 및 `.env` 설정
+  - `QDRANT_HOST=localhost`
+  - `QDRANT_PORT=6333`
+
+### 3. NestJS - Qdrant 연동
+
+- **모듈 구현**: `src/qdrant/qdrant.module.ts`
+  - `QdrantClient`를 `QDRANT_CLIENT` 토큰으로 제공
+  - `ConfigModule`을 사용하여 환경 변수 주입
+- **서비스 구현**: `src/qdrant/qdrant.service.ts`
+  - `onModuleInit`에서 연결 테스트 수행
+
+## 검증 결과
+
+### 서버 실행
+
+```bash
+npm run start:dev
+```
+
+- 접속: `http://localhost:3001`
+- 응답: `Hello World!`
+
+### Qdrant 연결 확인
+
+```bash
+curl localhost:6333/collections
+```
+
+- 응답: `{"result":{"collections":[],"time":0.0}}` (정상)
+
+## 파일 구조
+
+```
+rag-chat/
+├── docker-compose.yml
+├── test-env
+├── .env
+├── src/
+│   ├── app.module.ts
+│   ├── main.ts
+│   └── qdrant/
+│       ├── qdrant.module.ts
+│       └── qdrant.service.ts
+└── ...
+```
