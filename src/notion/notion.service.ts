@@ -39,9 +39,30 @@ export class NotionService {
   }
 
   async getPageContent(pageId: string) {
+    return await this.getAllBlocks(pageId);
+  }
+
+  /**
+   * 블록과 그 자식 블록들을 재귀적으로 가져오기
+   */
+  private async getAllBlocks(blockId: string): Promise<any[]> {
     const response = await (this.notion as any).blocks.children.list({
-      block_id: pageId,
+      block_id: blockId,
     });
-    return response.results;
+    
+    const blocks = response.results;
+    const allBlocks: any[] = [];
+
+    for (const block of blocks) {
+      allBlocks.push(block);
+      
+      // has_children이 true인 경우 자식 블록도 가져오기
+      if (block.has_children) {
+        const children = await this.getAllBlocks(block.id);
+        allBlocks.push(...children);
+      }
+    }
+
+    return allBlocks;
   }
 }

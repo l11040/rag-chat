@@ -47,6 +47,41 @@ export class QdrantService implements OnModuleInit {
     });
   }
 
+  async scrollPoints(collectionName: string, filter?: Record<string, any>) {
+    return await this.qdrantClient.scroll(collectionName, {
+      filter: filter,
+      limit: 100,
+      with_payload: true,
+      with_vector: false,
+    });
+  }
+
+  async isPageExists(collectionName: string, pageId: string): Promise<boolean> {
+    try {
+      // pageId로 시작하는 포인트 ID를 검색
+      const result = await this.qdrantClient.scroll(collectionName, {
+        filter: {
+          must: [
+            {
+              key: 'pageId',
+              match: {
+                value: pageId,
+              },
+            },
+          ],
+        },
+        limit: 1,
+        with_payload: false,
+        with_vector: false,
+      });
+
+      return result.points && result.points.length > 0;
+    } catch (error) {
+      console.error(`Error checking page existence: ${error}`);
+      return false;
+    }
+  }
+
   getClient(): QdrantClient {
     return this.qdrantClient;
   }

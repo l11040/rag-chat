@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Param } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { NotionService } from './notion.service';
 import { ConfigService } from '@nestjs/config';
@@ -20,5 +20,12 @@ export class NotionController {
       throw new Error('NOTION_DATABASE_ID is not defined');
     }
     return this.notionService.getDatabase(databaseId);
+  }
+
+  @Get('page/:pageId')
+  @ApiOperation({ summary: 'Get Notion Page content' })
+  @ApiResponse({ status: 200, description: 'Returns the content of a Notion page.' })
+  async getPageContent(@Param('pageId') pageId: string) {
+    return this.notionService.getPageContent(pageId);
   }
 }
