@@ -25,7 +25,7 @@ import { getTypeOrmConfig } from './database/typeorm.config';
     ThrottlerModule.forRoot([
       {
         ttl: 60000, // 1분
-        limit: 10, // 최대 10회 요청
+        limit: 100, // 최대 100회 요청 (테스트용으로 증가)
       },
     ]),
     QdrantModule,

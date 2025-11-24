@@ -11,6 +11,7 @@ import * as bcrypt from 'bcrypt';
 import { User } from './entities/user.entity';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
 
 @Injectable()
@@ -156,6 +157,7 @@ export class AuthService {
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
+      role: user.role,
     };
 
     const accessTokenExpiresIn =
@@ -193,5 +195,76 @@ export class AuthService {
 
   private async updateRefreshToken(userId: string, refreshToken: string) {
     await this.userRepository.update(userId, { refreshToken });
+  }
+
+  async findAllUsers() {
+    const users = await this.userRepository.find({
+      select: ['id', 'email', 'role', 'createdAt', 'updatedAt'],
+      order: { createdAt: 'DESC' },
+    });
+
+    return {
+      success: true,
+      users,
+    };
+  }
+
+  async findUserById(userId: string) {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'email', 'role', 'createdAt', 'updatedAt'],
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('사용자를 찾을 수 없습니다.');
+    }
+
+    return {
+      success: true,
+      user,
+    };
+  }
+
+  async updateUser(userId: string, updateUserDto: UpdateUserDto) {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('사용자를 찾을 수 없습니다.');
+    }
+
+    // 이메일 변경 시 중복 확인
+    if (updateUserDto.email && updateUserDto.email !== user.email) {
+      const existingUser = await this.userRepository.findOne({
+        where: { email: updateUserDto.email },
+      });
+
+      if (existingUser) {
+        throw new ConflictException('이미 사용 중인 이메일입니다.');
+      }
+    }
+
+    // 비밀번호 변경 시 해싱
+    if (updateUserDto.password) {
+      const saltRounds = 12;
+      updateUserDto.password = await bcrypt.hash(
+        updateUserDto.password,
+        saltRounds,
+      );
+    }
+
+    await this.userRepository.update(userId, updateUserDto);
+
+    const updatedUser = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'email', 'role', 'createdAt', 'updatedAt'],
+    });
+
+    return {
+      success: true,
+      message: '사용자 정보가 업데이트되었습니다.',
+      user: updatedUser,
+    };
   }
 }

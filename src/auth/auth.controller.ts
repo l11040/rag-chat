@@ -1,7 +1,10 @@
 import {
   Controller,
   Post,
+  Get,
+  Patch,
   Body,
+  Param,
   UseGuards,
   Request,
   HttpCode,
@@ -17,8 +20,12 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
+import { Roles } from './decorators/roles.decorator';
+import { Role } from './enums/role.enum';
 import { User } from './entities/user.entity';
 
 @ApiTags('인증')
@@ -126,6 +133,7 @@ export class AuthController {
       example: {
         id: 'uuid',
         email: 'user@example.com',
+        role: 'user',
         createdAt: '2024-01-01T00:00:00.000Z',
       },
     },
@@ -136,7 +144,99 @@ export class AuthController {
     return {
       id: user.id,
       email: user.email,
+      role: user.role,
       createdAt: user.createdAt,
     };
+  }
+
+  @Get('users')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: '모든 사용자 조회 (관리자 전용)' })
+  @ApiResponse({
+    status: 200,
+    description: '사용자 목록',
+    schema: {
+      example: {
+        success: true,
+        users: [
+          {
+            id: 'uuid',
+            email: 'user@example.com',
+            role: 'user',
+            createdAt: '2024-01-01T00:00:00.000Z',
+            updatedAt: '2024-01-01T00:00:00.000Z',
+          },
+        ],
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: '인증 필요' })
+  @ApiResponse({ status: 403, description: '권한 없음' })
+  async getAllUsers() {
+    return this.authService.findAllUsers();
+  }
+
+  @Get('users/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: '특정 사용자 조회 (관리자 전용)' })
+  @ApiResponse({
+    status: 200,
+    description: '사용자 정보',
+    schema: {
+      example: {
+        success: true,
+        user: {
+          id: 'uuid',
+          email: 'user@example.com',
+          role: 'user',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: '인증 필요' })
+  @ApiResponse({ status: 403, description: '권한 없음' })
+  @ApiResponse({ status: 404, description: '사용자를 찾을 수 없음' })
+  async getUserById(@Param('id') id: string) {
+    return this.authService.findUserById(id);
+  }
+
+  @Patch('users/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: '사용자 정보 수정 (관리자 전용)' })
+  @ApiResponse({
+    status: 200,
+    description: '사용자 정보 업데이트 성공',
+    schema: {
+      example: {
+        success: true,
+        message: '사용자 정보가 업데이트되었습니다.',
+        user: {
+          id: 'uuid',
+          email: 'user@example.com',
+          role: 'project_manager',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: '유효하지 않은 입력' })
+  @ApiResponse({ status: 401, description: '인증 필요' })
+  @ApiResponse({ status: 403, description: '권한 없음' })
+  @ApiResponse({ status: 404, description: '사용자를 찾을 수 없음' })
+  @ApiResponse({ status: 409, description: '이미 사용 중인 이메일' })
+  async updateUser(
+    @Param('id') id: string,
+    @Body() updateUserDto: UpdateUserDto,
+  ) {
+    return this.authService.updateUser(id, updateUserDto);
   }
 }
