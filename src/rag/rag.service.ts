@@ -9,18 +9,78 @@ import { randomUUID } from 'crypto';
 export interface SearchResult {
   id: string | number;
   score: number;
-  payload: any;
+  payload: QdrantPayload;
+}
+
+export interface QdrantPayload {
+  text?: string;
+  pageId?: string;
+  pageUrl?: string;
+  pageTitle?: string;
+  chunkIndex?: number;
+  totalChunks?: number;
+  [key: string]: unknown;
+}
+
+interface NotionProperty {
+  type: string;
+  title?: NotionTitleText[];
+  [key: string]: unknown;
+}
+
+interface NotionTitleText {
+  plain_text: string;
+  [key: string]: unknown;
 }
 
 interface NotionBlock {
   type: string;
-  [key: string]: any;
+  paragraph?: NotionBlockContent;
+  heading_1?: NotionBlockContent;
+  heading_2?: NotionBlockContent;
+  heading_3?: NotionBlockContent;
+  bulleted_list_item?: NotionBlockContent;
+  numbered_list_item?: NotionBlockContent;
+  to_do?: NotionBlockContent;
+  toggle?: NotionBlockContent;
+  quote?: NotionBlockContent;
+  callout?: NotionBlockContent;
+  code?: NotionBlockContent;
+  [key: string]: unknown;
+}
+
+interface NotionBlockContent {
+  rich_text?: NotionRichText[];
+  [key: string]: unknown;
+}
+
+interface NotionRichText {
+  plain_text?: string;
+  [key: string]: unknown;
 }
 
 interface NotionPage {
   id: string;
   url: string;
-  properties: any;
+  properties: Record<string, NotionProperty>;
+}
+
+interface QdrantPoint {
+  id: string | number;
+  payload: QdrantPayload;
+  [key: string]: unknown;
+}
+
+interface QdrantScrollResult {
+  points: QdrantPoint[];
+  [key: string]: unknown;
+}
+
+interface QdrantSearchItem {
+  id: string | number;
+  score: number;
+  payload: QdrantPayload;
+  [key: string]: unknown;
 }
 
 @Injectable()
@@ -161,8 +221,15 @@ export class RagService {
       const properties = page.properties;
       for (const key in properties) {
         const prop = properties[key];
-        if (prop.type === 'title' && prop.title && prop.title.length > 0) {
-          return prop.title.map((t: any) => t.plain_text).join('');
+        if (
+          prop.type === 'title' &&
+          prop.title &&
+          Array.isArray(prop.title) &&
+          prop.title.length > 0
+        ) {
+          return prop.title
+            .map((t: NotionTitleText) => t.plain_text || '')
+            .join('');
         }
       }
       return 'Untitled';
@@ -208,17 +275,21 @@ export class RagService {
     ];
 
     if (textTypes.includes(type)) {
-      const content = block[type];
-      if (content && content.rich_text) {
-        return content.rich_text.map((rt: any) => rt.plain_text || '').join('');
+      const content = block[type] as NotionBlockContent | undefined;
+      if (content?.rich_text && Array.isArray(content.rich_text)) {
+        return content.rich_text
+          .map((rt: NotionRichText) => rt.plain_text || '')
+          .join('');
       }
     }
 
     // 코드 블록
-    if (type === 'code') {
+    if (type === 'code' && block.code) {
       const content = block.code;
-      if (content && content.rich_text) {
-        return content.rich_text.map((rt: any) => rt.plain_text || '').join('');
+      if (content.rich_text && Array.isArray(content.rich_text)) {
+        return content.rich_text
+          .map((rt: NotionRichText) => rt.plain_text || '')
+          .join('');
       }
     }
 
@@ -257,12 +328,14 @@ export class RagService {
 
     // "[문서 N]" 패턴 찾기 (N은 숫자)
     const documentPattern = /\[문서\s*(\d+)\]/g;
-    let match;
+    let match: RegExpExecArray | null;
 
     while ((match = documentPattern.exec(answer)) !== null) {
-      const docIndex = parseInt(match[1], 10);
-      if (!isNaN(docIndex)) {
-        usedIndices.add(docIndex);
+      if (match[1]) {
+        const docIndex = parseInt(match[1], 10);
+        if (!isNaN(docIndex)) {
+          usedIndices.add(docIndex);
+        }
       }
     }
 
@@ -318,15 +391,17 @@ export class RagService {
       );
 
       // 최대 10개만 반환
-      const samples = result.points.slice(0, 10).map((point: any) => ({
-        id: point.id,
-        payload: point.payload,
-      }));
+      const samples = (result as QdrantScrollResult).points
+        .slice(0, 10)
+        .map((point: QdrantPoint) => ({
+          id: point.id,
+          payload: point.payload,
+        }));
 
       return {
         success: true,
         count: samples.length,
-        totalPoints: result.points.length,
+        totalPoints: (result as QdrantScrollResult).points.length,
         samples,
       };
     } catch (error) {
@@ -364,21 +439,25 @@ export class RagService {
         }
       >();
 
-      for (const point of result.points) {
-        const payload = point.payload as any;
+      for (const point of (result as QdrantScrollResult).points) {
+        const payload = point.payload;
         const pageId = payload.pageId;
 
-        if (!pageStats.has(pageId)) {
-          pageStats.set(pageId, {
-            pageId,
-            pageTitle: payload.pageTitle || 'Unknown',
-            pageUrl: payload.pageUrl || '',
-            chunkCount: 0,
-          });
-        }
+        if (pageId && typeof pageId === 'string') {
+          if (!pageStats.has(pageId)) {
+            pageStats.set(pageId, {
+              pageId,
+              pageTitle: payload.pageTitle || 'Unknown',
+              pageUrl: payload.pageUrl || '',
+              chunkCount: 0,
+            });
+          }
 
-        const stats = pageStats.get(pageId)!;
-        stats.chunkCount++;
+          const stats = pageStats.get(pageId);
+          if (stats) {
+            stats.chunkCount++;
+          }
+        }
       }
 
       return {
@@ -442,13 +521,13 @@ export class RagService {
       );
 
       // 3. 검색 결과 포맷팅 및 스코어 필터링
-      const allResults: SearchResult[] = (searchResult || []).map(
-        (item: any) => ({
-          id: item.id,
-          score: item.score,
-          payload: item.payload,
-        }),
-      );
+      const allResults: SearchResult[] = (
+        (searchResult as QdrantSearchItem[]) || []
+      ).map((item: QdrantSearchItem) => ({
+        id: item.id,
+        score: item.score,
+        payload: item.payload,
+      }));
 
       // 4. 최소 스코어 임계값 이상인 결과만 필터링
       let results = allResults.filter(
@@ -493,9 +572,9 @@ export class RagService {
 
       // 7. 검색된 문서들을 LLM에 전달할 형식으로 변환
       const contextDocuments = results.map((result) => ({
-        text: result.payload.text || '',
-        pageTitle: result.payload.pageTitle || 'Unknown',
-        pageUrl: result.payload.pageUrl || '',
+        text: (result.payload.text as string) || '',
+        pageTitle: (result.payload.pageTitle as string) || 'Unknown',
+        pageUrl: (result.payload.pageUrl as string) || '',
       }));
 
       this.logger.log(
@@ -519,28 +598,39 @@ export class RagService {
       const usedDocumentIndices = this.extractUsedDocumentIndices(answer);
 
       // 10. 실제로 사용된 문서만 필터링하여 반환
-      let sources;
+      let sources: Array<{
+        pageTitle: string;
+        pageUrl: string;
+        score: number;
+        chunkText: string;
+      }>;
       if (usedDocumentIndices.size > 0) {
         // 인용된 문서가 있으면 해당 문서만 반환
         sources = results
           .filter((_, index) => usedDocumentIndices.has(index + 1)) // 문서 번호는 1부터 시작
-          .map((result) => ({
-            pageTitle: result.payload.pageTitle || 'Unknown',
-            pageUrl: result.payload.pageUrl || '',
-            score: result.score,
-            chunkText: (result.payload.text || '').substring(0, 200) + '...', // 미리보기
-          }));
+          .map((result) => {
+            const text = (result.payload.text as string) || '';
+            return {
+              pageTitle: (result.payload.pageTitle as string) || 'Unknown',
+              pageUrl: (result.payload.pageUrl as string) || '',
+              score: result.score,
+              chunkText: text.substring(0, 200) + '...', // 미리보기
+            };
+          });
         this.logger.log(
           `답변에 실제로 사용된 문서: ${usedDocumentIndices.size}개 (전체 검색 결과: ${results.length}개)`,
         );
       } else {
         // 인용이 없으면 상위 점수 문서 3개만 반환 (실제로 사용되었을 가능성이 높음)
-        sources = results.slice(0, 3).map((result) => ({
-          pageTitle: result.payload.pageTitle || 'Unknown',
-          pageUrl: result.payload.pageUrl || '',
-          score: result.score,
-          chunkText: (result.payload.text || '').substring(0, 200) + '...', // 미리보기
-        }));
+        sources = results.slice(0, 3).map((result) => {
+          const text = (result.payload.text as string) || '';
+          return {
+            pageTitle: (result.payload.pageTitle as string) || 'Unknown',
+            pageUrl: (result.payload.pageUrl as string) || '',
+            score: result.score,
+            chunkText: text.substring(0, 200) + '...', // 미리보기
+          };
+        });
         this.logger.log(
           `답변에서 문서 인용을 찾을 수 없어 상위 3개 문서를 반환합니다.`,
         );

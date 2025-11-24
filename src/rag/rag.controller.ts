@@ -1,10 +1,20 @@
-import { Controller, Post, Body, Logger, Get } from '@nestjs/common';
+import { Controller, Post, Body, Logger, Get, UseGuards } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiProperty,
+  ApiBearerAuth,
 } from '@nestjs/swagger';
+import {
+  IsString,
+  IsOptional,
+  IsArray,
+  ValidateNested,
+  IsEnum,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RagService } from './rag.service';
 
 class IngestDto {
@@ -13,6 +23,8 @@ class IngestDto {
     description:
       '처리할 Notion 데이터베이스 ID (제공하지 않으면 환경 변수 사용)',
   })
+  @IsOptional()
+  @IsString()
   databaseId?: string;
 }
 
@@ -22,12 +34,14 @@ class ConversationMessage {
     description: '메시지 역할 (user 또는 assistant)',
     enum: ['user', 'assistant'],
   })
+  @IsEnum(['user', 'assistant'])
   role: 'user' | 'assistant';
 
   @ApiProperty({
     required: true,
     description: '메시지 내용',
   })
+  @IsString()
   content: string;
 }
 
@@ -36,6 +50,7 @@ class QueryDto {
     required: true,
     description: '사용자 질문 문자열',
   })
+  @IsString()
   question: string;
 
   @ApiProperty({
@@ -43,11 +58,17 @@ class QueryDto {
     description: '이전 대화 히스토리 (연속적인 대화를 위한 컨텍스트)',
     type: [ConversationMessage],
   })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ConversationMessage)
   conversationHistory?: ConversationMessage[];
 }
 
 @ApiTags('RAG')
 @Controller('rag')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth('JWT-auth')
 export class RagController {
   private readonly logger = new Logger(RagController.name);
 
@@ -58,6 +79,7 @@ export class RagController {
     summary: 'Notion 데이터베이스 내용을 임베딩하여 Qdrant에 저장',
   })
   @ApiResponse({ status: 200, description: '성공적으로 저장됨' })
+  @ApiResponse({ status: 401, description: '인증 필요' })
   async ingest(@Body() body: IngestDto) {
     const result = await this.ragService.ingestNotionDatabase(body.databaseId);
     return {
@@ -73,6 +95,7 @@ export class RagController {
     status: 200,
     description: 'LLM이 생성한 답변과 인용된 문서 정보 반환',
   })
+  @ApiResponse({ status: 401, description: '인증 필요' })
   async query(@Body() body: QueryDto) {
     const result = await this.ragService.query(
       body.question,
@@ -84,6 +107,7 @@ export class RagController {
   @Get('collection-info')
   @ApiOperation({ summary: 'Qdrant 컬렉션 정보 조회' })
   @ApiResponse({ status: 200, description: '컬렉션 정보 반환' })
+  @ApiResponse({ status: 401, description: '인증 필요' })
   async getCollectionInfo() {
     return await this.ragService.getCollectionInfo();
   }
@@ -91,6 +115,7 @@ export class RagController {
   @Get('sample-data')
   @ApiOperation({ summary: '저장된 데이터 샘플 조회 (최대 10개)' })
   @ApiResponse({ status: 200, description: '샘플 데이터 반환' })
+  @ApiResponse({ status: 401, description: '인증 필요' })
   async getSampleData() {
     return await this.ragService.getSampleData();
   }
@@ -98,6 +123,7 @@ export class RagController {
   @Get('stats')
   @ApiOperation({ summary: 'Qdrant 저장 통계 정보' })
   @ApiResponse({ status: 200, description: '통계 정보 반환' })
+  @ApiResponse({ status: 401, description: '인증 필요' })
   async getStats() {
     return await this.ragService.getStats();
   }

@@ -10,6 +10,7 @@ Notion 문서를 기반으로 한 RAG(Retrieval-Augmented Generation) 시스템�
 - 🎯 **의도 기반 답변**: 사용자의 의도(예시 요청, 방법 요청 등)를 파악하여 적절한 형식으로 답변
 - 📊 **벡터 검색**: Qdrant 벡터 데이터베이스를 사용한 유사도 기반 문서 검색
 - 🤖 **LLM 답변 생성**: GPT-3.5-turbo를 사용한 문서 기반 자연어 답변 생성
+- 🔐 **보안 인증**: JWT 기반 인증 시스템 (회원가입, 로그인, 토큰 갱신)
 
 ## 기술 스택
 
@@ -72,6 +73,20 @@ QDRANT_PORT=6333
 
 # Server
 PORT=3001
+
+# Database
+DB_HOST=localhost
+DB_PORT=3306
+DB_USERNAME=root
+DB_PASSWORD=rootpassword
+DB_DATABASE=rag_chat
+DB_SYNCHRONIZE=false
+
+# JWT Authentication
+JWT_SECRET=03e9253e282edc5b3
+JWT_REFRESH_SECRET=c8b48b5d3
+JWT_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=7d
 ```
 
 3. **Qdrant 실행**
@@ -101,7 +116,74 @@ npm run start:prod
 
 ### 주요 엔드포인트
 
-#### 1. Notion 문서 수집 (Ingestion)
+#### 인증 (Authentication)
+
+##### 1. 회원가입
+
+```bash
+POST /auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePassword123!"
+}
+```
+
+**응답 예시**:
+```json
+{
+  "success": true,
+  "message": "회원가입이 완료되었습니다.",
+  "user": {
+    "id": "uuid",
+    "email": "user@example.com"
+  },
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+##### 2. 로그인
+
+```bash
+POST /auth/login
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePassword123!"
+}
+```
+
+##### 3. 토큰 갱신
+
+```bash
+POST /auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+##### 4. 로그아웃
+
+```bash
+POST /auth/logout
+Authorization: Bearer {accessToken}
+```
+
+##### 5. 현재 사용자 정보 조회
+
+```bash
+POST /auth/me
+Authorization: Bearer {accessToken}
+```
+
+#### RAG 기능
+
+##### 1. Notion 문서 수집 (Ingestion)
 
 Notion 데이터베이스의 문서를 벡터 DB에 저장합니다.
 
@@ -114,7 +196,7 @@ Content-Type: application/json
 }
 ```
 
-#### 2. 질문하기 (Query)
+##### 2. 질문하기 (Query)
 
 문서를 기반으로 질문에 답변합니다.
 
@@ -262,6 +344,15 @@ GET /rag/stats
 | `QDRANT_HOST` | Qdrant 호스트 (기본: localhost) | ❌ |
 | `QDRANT_PORT` | Qdrant 포트 (기본: 6333) | ❌ |
 | `PORT` | 서버 포트 (기본: 3001) | ❌ |
+| `DB_HOST` | 데이터베이스 호스트 (기본: localhost) | ❌ |
+| `DB_PORT` | 데이터베이스 포트 (기본: 3306) | ❌ |
+| `DB_USERNAME` | 데이터베이스 사용자명 (기본: root) | ❌ |
+| `DB_PASSWORD` | 데이터베이스 비밀번호 | ❌ |
+| `DB_DATABASE` | 데이터베이스 이름 (기본: rag_chat) | ❌ |
+| `JWT_SECRET` | JWT 서명용 시크릿 키 | ✅ |
+| `JWT_REFRESH_SECRET` | JWT Refresh Token 서명용 시크릿 키 | ✅ |
+| `JWT_EXPIRES_IN` | Access Token 만료 시간 (기본: 15m) | ❌ |
+| `JWT_REFRESH_EXPIRES_IN` | Refresh Token 만료 시간 (기본: 7d) | ❌ |
 
 ## 스크립트
 
