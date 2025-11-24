@@ -19,7 +19,10 @@ export class OpenAIService {
     });
   }
 
-  async getEmbedding(text: string): Promise<{ embedding: number[]; usage: { promptTokens: number; totalTokens: number } }> {
+  async getEmbedding(text: string): Promise<{
+    embedding: number[];
+    usage: { promptTokens: number; totalTokens: number };
+  }> {
     try {
       const response = await this.openai.embeddings.create({
         model: 'text-embedding-3-small',
@@ -50,8 +53,18 @@ export class OpenAIService {
    */
   async rewriteQueryForSearch(
     question: string,
-    conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
-  ): Promise<{ rewrittenQuery: string; usage: { promptTokens: number; completionTokens: number; totalTokens: number } }> {
+    conversationHistory?: Array<{
+      role: 'user' | 'assistant';
+      content: string;
+    }>,
+  ): Promise<{
+    rewrittenQuery: string;
+    usage: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+    };
+  }> {
     try {
       const systemPrompt = `당신은 사용자의 질문을 벡터 검색에 최적화된 검색 쿼리로 변환하는 전문가입니다.
 
@@ -82,9 +95,12 @@ export class OpenAIService {
       if (conversationHistory && conversationHistory.length > 0) {
         const historyText = conversationHistory
           .slice(-5) // 최근 5개만 사용 (토큰 절약)
-          .map((msg) => `${msg.role === 'user' ? '사용자' : '어시스턴트'}: ${msg.content}`)
+          .map(
+            (msg) =>
+              `${msg.role === 'user' ? '사용자' : '어시스턴트'}: ${msg.content}`,
+          )
           .join('\n');
-        
+
         userPrompt = `다음 대화 히스토리를 참고하여, 마지막 질문을 벡터 검색에 최적화된 검색 쿼리로 변환해주세요:
 
 대화 히스토리:
@@ -105,15 +121,16 @@ ${historyText}
         max_tokens: 200,
       });
 
-      const rewrittenQuery = response.choices[0]?.message?.content?.trim() || question;
+      const rewrittenQuery =
+        response.choices[0]?.message?.content?.trim() || question;
       const usage = response.usage || {
         prompt_tokens: 0,
         completion_tokens: 0,
         total_tokens: 0,
       };
-      
+
       this.logger.log(`쿼리 재작성: "${question}" -> "${rewrittenQuery}"`);
-      
+
       return {
         rewrittenQuery,
         usage: {
@@ -123,9 +140,7 @@ ${historyText}
         },
       };
     } catch (error) {
-      this.logger.error(
-        `Failed to rewrite query: ${(error as Error).message}`,
-      );
+      this.logger.error(`Failed to rewrite query: ${(error as Error).message}`);
       // 에러 발생 시 원본 질문 반환
       return {
         rewrittenQuery: question,
@@ -140,9 +155,23 @@ ${historyText}
 
   async generateAnswer(
     question: string,
-    contextDocuments: Array<{ text: string; pageTitle: string; pageUrl: string }>,
-    conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
-  ): Promise<{ answer: string; usage: { promptTokens: number; completionTokens: number; totalTokens: number } }> {
+    contextDocuments: Array<{
+      text: string;
+      pageTitle: string;
+      pageUrl: string;
+    }>,
+    conversationHistory?: Array<{
+      role: 'user' | 'assistant';
+      content: string;
+    }>,
+  ): Promise<{
+    answer: string;
+    usage: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+    };
+  }> {
     try {
       // 문서 컨텍스트를 문자열로 변환
       const contextText = contextDocuments
@@ -178,17 +207,24 @@ ${historyText}
 
       // 질문에서 의도 파악
       const questionLower = question.toLowerCase();
-      const wantsExample = questionLower.includes('예시') || questionLower.includes('예를') || questionLower.includes('보여') || questionLower.includes('알려줘');
-      const wantsHowTo = questionLower.includes('어떻게') || questionLower.includes('방법');
-      
+      const wantsExample =
+        questionLower.includes('예시') ||
+        questionLower.includes('예를') ||
+        questionLower.includes('보여') ||
+        questionLower.includes('알려줘');
+      const wantsHowTo =
+        questionLower.includes('어떻게') || questionLower.includes('방법');
+
       let answerGuidance = '';
       if (wantsExample) {
-        answerGuidance = '\n\n중요: 예시를 요청했으므로, 먼저 1-2줄로 간단히 설명한 후, 구체적인 예시를 코드 블록(```) 형식으로 명확하게 제공하세요. 예시가 잘 보이도록 코드 블록을 사용하세요.';
+        answerGuidance =
+          '\n\n중요: 예시를 요청했으므로, 먼저 1-2줄로 간단히 설명한 후, 구체적인 예시를 코드 블록(```) 형식으로 명확하게 제공하세요. 예시가 잘 보이도록 코드 블록을 사용하세요.';
       } else if (wantsHowTo) {
-        answerGuidance = '\n\n중요: 방법을 물어봤으므로, 단계별로 번호를 매겨 간결하게 설명하세요.';
+        answerGuidance =
+          '\n\n중요: 방법을 물어봤으므로, 단계별로 번호를 매겨 간결하게 설명하세요.';
       }
 
-      let userPrompt = `다음 문서들을 참고하여 질문에 답변해주세요:
+      const userPrompt = `다음 문서들을 참고하여 질문에 답변해주세요:
 
 ${contextText}
 
@@ -199,9 +235,10 @@ ${contextText}
 - 예시가 요청되었다면 코드 블록으로 명확하게 보여주세요.`;
 
       // 대화 히스토리가 있으면 메시지에 포함
-      const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-        { role: 'system', content: systemPrompt },
-      ];
+      const messages: Array<{
+        role: 'system' | 'user' | 'assistant';
+        content: string;
+      }> = [{ role: 'system', content: systemPrompt }];
 
       // 대화 히스토리 추가 (최근 5개만)
       if (conversationHistory && conversationHistory.length > 0) {

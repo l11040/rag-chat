@@ -13,7 +13,10 @@ export class NotionController {
 
   @Get('database')
   @ApiOperation({ summary: 'Get Notion Database pages' })
-  @ApiResponse({ status: 200, description: 'Returns the list of pages in the configured Notion database.' })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns the list of pages in the configured Notion database.',
+  })
   async getDatabase() {
     const databaseId = this.configService.get<string>('NOTION_DATABASE_ID');
     if (!databaseId) {
@@ -24,7 +27,10 @@ export class NotionController {
 
   @Get('page/:pageId')
   @ApiOperation({ summary: 'Get Notion Page content' })
-  @ApiResponse({ status: 200, description: 'Returns the content of a Notion page.' })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns the content of a Notion page.',
+  })
   async getPageContent(@Param('pageId') pageId: string) {
     return this.notionService.getPageContent(pageId);
   }

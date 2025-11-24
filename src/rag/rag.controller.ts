@@ -8,9 +8,10 @@ import {
 import { RagService } from './rag.service';
 
 class IngestDto {
-  @ApiProperty({ 
-    required: false, 
-    description: '처리할 Notion 데이터베이스 ID (제공하지 않으면 환경 변수 사용)', 
+  @ApiProperty({
+    required: false,
+    description:
+      '처리할 Notion 데이터베이스 ID (제공하지 않으면 환경 변수 사용)',
   })
   databaseId?: string;
 }
@@ -53,7 +54,9 @@ export class RagController {
   constructor(private readonly ragService: RagService) {}
 
   @Post('ingest')
-  @ApiOperation({ summary: 'Notion 데이터베이스 내용을 임베딩하여 Qdrant에 저장' })
+  @ApiOperation({
+    summary: 'Notion 데이터베이스 내용을 임베딩하여 Qdrant에 저장',
+  })
   @ApiResponse({ status: 200, description: '성공적으로 저장됨' })
   async ingest(@Body() body: IngestDto) {
     const result = await this.ragService.ingestNotionDatabase(body.databaseId);
@@ -66,7 +69,10 @@ export class RagController {
 
   @Post('query')
   @ApiOperation({ summary: '질문에 대한 LLM 기반 답변 생성 (문서 기반)' })
-  @ApiResponse({ status: 200, description: 'LLM이 생성한 답변과 인용된 문서 정보 반환' })
+  @ApiResponse({
+    status: 200,
+    description: 'LLM이 생성한 답변과 인용된 문서 정보 반환',
+  })
   async query(@Body() body: QueryDto) {
     const result = await this.ragService.query(
       body.question,

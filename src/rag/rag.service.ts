@@ -41,10 +41,13 @@ export class RagService {
 
   async ingestNotionDatabase(databaseId?: string) {
     // databaseId가 제공되지 않으면 환경 변수에서 가져오기
-    const targetDatabaseId = databaseId || this.configService.get<string>('NOTION_DATABASE_ID');
-    
+    const targetDatabaseId =
+      databaseId || this.configService.get<string>('NOTION_DATABASE_ID');
+
     if (!targetDatabaseId) {
-      throw new Error('Database ID must be provided either as parameter or in NOTION_DATABASE_ID environment variable');
+      throw new Error(
+        'Database ID must be provided either as parameter or in NOTION_DATABASE_ID environment variable',
+      );
     }
 
     this.logger.log(`Starting ingestion for database: ${targetDatabaseId}`);
@@ -207,9 +210,7 @@ export class RagService {
     if (textTypes.includes(type)) {
       const content = block[type];
       if (content && content.rich_text) {
-        return content.rich_text
-          .map((rt: any) => rt.plain_text || '')
-          .join('');
+        return content.rich_text.map((rt: any) => rt.plain_text || '').join('');
       }
     }
 
@@ -217,9 +218,7 @@ export class RagService {
     if (type === 'code') {
       const content = block.code;
       if (content && content.rich_text) {
-        return content.rich_text
-          .map((rt: any) => rt.plain_text || '')
-          .join('');
+        return content.rich_text.map((rt: any) => rt.plain_text || '').join('');
       }
     }
 
@@ -255,31 +254,33 @@ export class RagService {
    */
   private extractUsedDocumentIndices(answer: string): Set<number> {
     const usedIndices = new Set<number>();
-    
+
     // "[문서 N]" 패턴 찾기 (N은 숫자)
     const documentPattern = /\[문서\s*(\d+)\]/g;
     let match;
-    
+
     while ((match = documentPattern.exec(answer)) !== null) {
       const docIndex = parseInt(match[1], 10);
       if (!isNaN(docIndex)) {
         usedIndices.add(docIndex);
       }
     }
-    
+
     // 만약 인용이 하나도 없으면, 모든 문서를 사용한 것으로 간주 (하위 호환성)
     // 하지만 실제로는 답변이 생성되었다는 것은 최소한 일부 문서가 사용되었다는 의미
     // 따라서 인용이 없어도 답변이 생성되었다면, 상위 점수 문서들만 사용한 것으로 간주
     if (usedIndices.size === 0) {
       // 인용이 없으면 상위 3개 문서를 사용한 것으로 간주
       // (실제로는 LLM이 인용 없이 답변을 생성했을 수 있으므로)
-      this.logger.warn('답변에서 문서 인용을 찾을 수 없습니다. 상위 문서들을 사용한 것으로 간주합니다.');
+      this.logger.warn(
+        '답변에서 문서 인용을 찾을 수 없습니다. 상위 문서들을 사용한 것으로 간주합니다.',
+      );
       // 빈 Set을 반환하면 필터링에서 모든 문서가 제외되므로, 최소한 상위 문서는 포함
       // 하지만 이 경우는 실제로 사용 여부를 알 수 없으므로, 모든 문서를 반환하지 않고
       // 상위 점수 문서만 반환하는 것이 더 나을 수 있습니다.
       // 일단 인용이 없으면 빈 Set을 반환하고, rag.service에서 처리하도록 합니다.
     }
-    
+
     return usedIndices;
   }
 
@@ -290,14 +291,16 @@ export class RagService {
     try {
       const client = this.qdrantService.getClient();
       const collectionInfo = await client.getCollection(this.COLLECTION_NAME);
-      
+
       return {
         success: true,
         collectionName: this.COLLECTION_NAME,
         info: collectionInfo,
       };
     } catch (error) {
-      this.logger.error(`Failed to get collection info: ${(error as Error).message}`);
+      this.logger.error(
+        `Failed to get collection info: ${(error as Error).message}`,
+      );
       return {
         success: false,
         error: (error as Error).message,
@@ -313,7 +316,7 @@ export class RagService {
       const result = await this.qdrantService.scrollPoints(
         this.COLLECTION_NAME,
       );
-      
+
       // 최대 10개만 반환
       const samples = result.points.slice(0, 10).map((point: any) => ({
         id: point.id,
@@ -327,7 +330,9 @@ export class RagService {
         samples,
       };
     } catch (error) {
-      this.logger.error(`Failed to get sample data: ${(error as Error).message}`);
+      this.logger.error(
+        `Failed to get sample data: ${(error as Error).message}`,
+      );
       return {
         success: false,
         error: (error as Error).message,
@@ -342,24 +347,27 @@ export class RagService {
     try {
       const client = this.qdrantService.getClient();
       const collectionInfo = await client.getCollection(this.COLLECTION_NAME);
-      
+
       // 모든 포인트 가져오기
       const result = await this.qdrantService.scrollPoints(
         this.COLLECTION_NAME,
       );
 
       // 페이지별 통계 계산
-      const pageStats = new Map<string, {
-        pageId: string;
-        pageTitle: string;
-        pageUrl: string;
-        chunkCount: number;
-      }>();
+      const pageStats = new Map<
+        string,
+        {
+          pageId: string;
+          pageTitle: string;
+          pageUrl: string;
+          chunkCount: number;
+        }
+      >();
 
       for (const point of result.points) {
         const payload = point.payload as any;
         const pageId = payload.pageId;
-        
+
         if (!pageStats.has(pageId)) {
           pageStats.set(pageId, {
             pageId,
@@ -368,7 +376,7 @@ export class RagService {
             chunkCount: 0,
           });
         }
-        
+
         const stats = pageStats.get(pageId)!;
         stats.chunkCount++;
       }
@@ -391,11 +399,14 @@ export class RagService {
   }
   async query(
     question: string,
-    conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+    conversationHistory?: Array<{
+      role: 'user' | 'assistant';
+      content: string;
+    }>,
   ) {
     try {
       // 토큰 사용량 추적을 위한 변수 초기화
-      let totalUsage = {
+      const totalUsage = {
         promptTokens: 0,
         completionTokens: 0,
         totalTokens: 0,
@@ -403,20 +414,22 @@ export class RagService {
 
       // 1. LLM을 사용하여 질문을 검색에 최적화된 쿼리로 재작성
       this.logger.log(`원본 질문: "${question}"`);
-      const { rewrittenQuery, usage: rewriteUsage } = await this.openaiService.rewriteQueryForSearch(
-        question,
-        conversationHistory,
-      );
+      const { rewrittenQuery, usage: rewriteUsage } =
+        await this.openaiService.rewriteQueryForSearch(
+          question,
+          conversationHistory,
+        );
       this.logger.log(`재작성된 검색 쿼리: "${rewrittenQuery}"`);
-      
+
       // 토큰 사용량 합산
       totalUsage.promptTokens += rewriteUsage.promptTokens;
       totalUsage.completionTokens += rewriteUsage.completionTokens;
       totalUsage.totalTokens += rewriteUsage.totalTokens;
 
       // 2. 재작성된 쿼리에 대한 임베딩 생성
-      const { embedding, usage: embeddingUsage } = await this.openaiService.getEmbedding(rewrittenQuery);
-      
+      const { embedding, usage: embeddingUsage } =
+        await this.openaiService.getEmbedding(rewrittenQuery);
+
       // 토큰 사용량 합산
       totalUsage.promptTokens += embeddingUsage.promptTokens;
       totalUsage.totalTokens += embeddingUsage.totalTokens;
@@ -429,11 +442,13 @@ export class RagService {
       );
 
       // 3. 검색 결과 포맷팅 및 스코어 필터링
-      const allResults: SearchResult[] = (searchResult || []).map((item: any) => ({
-        id: item.id,
-        score: item.score,
-        payload: item.payload,
-      }));
+      const allResults: SearchResult[] = (searchResult || []).map(
+        (item: any) => ({
+          id: item.id,
+          score: item.score,
+          payload: item.payload,
+        }),
+      );
 
       // 4. 최소 스코어 임계값 이상인 결과만 필터링
       let results = allResults.filter(
@@ -467,7 +482,8 @@ export class RagService {
         );
         return {
           success: false,
-          answer: '제공된 문서에는 이 질문에 대한 충분히 관련성 있는 정보가 없습니다.',
+          answer:
+            '제공된 문서에는 이 질문에 대한 충분히 관련성 있는 정보가 없습니다.',
           sources: [],
           maxScore: maxScore,
           threshold: this.MIN_SCORE_THRESHOLD,
@@ -487,12 +503,13 @@ export class RagService {
       );
 
       // 8. LLM을 사용하여 문서 기반 답변 생성
-      const { answer, usage: answerUsage } = await this.openaiService.generateAnswer(
-        question,
-        contextDocuments,
-        conversationHistory,
-      );
-      
+      const { answer, usage: answerUsage } =
+        await this.openaiService.generateAnswer(
+          question,
+          contextDocuments,
+          conversationHistory,
+        );
+
       // 토큰 사용량 합산
       totalUsage.promptTokens += answerUsage.promptTokens;
       totalUsage.completionTokens += answerUsage.completionTokens;
@@ -500,7 +517,7 @@ export class RagService {
 
       // 9. 답변에서 실제로 사용된 문서 인덱스 추출
       const usedDocumentIndices = this.extractUsedDocumentIndices(answer);
-      
+
       // 10. 실제로 사용된 문서만 필터링하여 반환
       let sources;
       if (usedDocumentIndices.size > 0) {
@@ -518,14 +535,12 @@ export class RagService {
         );
       } else {
         // 인용이 없으면 상위 점수 문서 3개만 반환 (실제로 사용되었을 가능성이 높음)
-        sources = results
-          .slice(0, 3)
-          .map((result) => ({
-            pageTitle: result.payload.pageTitle || 'Unknown',
-            pageUrl: result.payload.pageUrl || '',
-            score: result.score,
-            chunkText: (result.payload.text || '').substring(0, 200) + '...', // 미리보기
-          }));
+        sources = results.slice(0, 3).map((result) => ({
+          pageTitle: result.payload.pageTitle || 'Unknown',
+          pageUrl: result.payload.pageUrl || '',
+          score: result.score,
+          chunkText: (result.payload.text || '').substring(0, 200) + '...', // 미리보기
+        }));
         this.logger.log(
           `답변에서 문서 인용을 찾을 수 없어 상위 3개 문서를 반환합니다.`,
         );
@@ -550,4 +565,3 @@ export class RagService {
     }
   }
 }
-
