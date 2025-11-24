@@ -1,4 +1,12 @@
-import { Controller, Post, Body, Logger, Get, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Logger,
+  Get,
+  UseGuards,
+  Query,
+} from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -12,9 +20,13 @@ import {
   IsArray,
   ValidateNested,
   IsEnum,
+  ArrayMinSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role } from '../auth/enums/role.enum';
 import { RagService } from './rag.service';
 
 class IngestDto {
@@ -63,6 +75,27 @@ class QueryDto {
   @ValidateNested({ each: true })
   @Type(() => ConversationMessage)
   conversationHistory?: ConversationMessage[];
+}
+
+class UpdatePageDto {
+  @ApiProperty({
+    required: true,
+    description: '업데이트할 Notion 페이지 ID',
+  })
+  @IsString()
+  pageId: string;
+}
+
+class UpdatePagesDto {
+  @ApiProperty({
+    required: true,
+    description: '업데이트할 Notion 페이지 ID 목록',
+    type: [String],
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  pageIds: string[];
 }
 
 @ApiTags('RAG')
@@ -126,5 +159,78 @@ export class RagController {
   @ApiResponse({ status: 401, description: '인증 필요' })
   async getStats() {
     return await this.ragService.getStats();
+  }
+
+  // ==================== 관리자용 API ====================
+
+  @Post('admin/sync-pages')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUB_ADMIN)
+  @ApiOperation({
+    summary: '[관리자] Notion 페이지 목록을 데이터베이스에 동기화',
+    description: 'Notion에서 페이지 목록을 가져와 메타데이터만 DB에 저장',
+  })
+  @ApiResponse({ status: 200, description: '동기화 완료' })
+  @ApiResponse({ status: 401, description: '인증 필요' })
+  @ApiResponse({ status: 403, description: '권한 없음' })
+  async syncPages(@Body() body: IngestDto) {
+    const result = await this.ragService.syncNotionPages(body.databaseId);
+    return result;
+  }
+
+  @Get('admin/pages')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUB_ADMIN)
+  @ApiOperation({
+    summary: '[관리자] 페이지 목록 조회',
+    description: '데이터베이스에 저장된 페이지 목록 조회',
+  })
+  @ApiResponse({ status: 200, description: '페이지 목록 반환' })
+  @ApiResponse({ status: 401, description: '인증 필요' })
+  @ApiResponse({ status: 403, description: '권한 없음' })
+  async getPages(@Query('databaseId') databaseId?: string) {
+    return await this.ragService.getPageList(databaseId);
+  }
+
+  @Post('admin/update-page')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUB_ADMIN)
+  @ApiOperation({
+    summary: '[관리자] 특정 페이지를 벡터 DB에 업데이트',
+    description: '기존 벡터 데이터를 삭제하고 새로운 임베딩으로 업데이트',
+  })
+  @ApiResponse({ status: 200, description: '페이지 업데이트 완료' })
+  @ApiResponse({ status: 401, description: '인증 필요' })
+  @ApiResponse({ status: 403, description: '권한 없음' })
+  async updatePage(@Body() body: UpdatePageDto) {
+    return await this.ragService.updatePage(body.pageId);
+  }
+
+  @Post('admin/update-pages')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUB_ADMIN)
+  @ApiOperation({
+    summary: '[관리자] 여러 페이지를 벡터 DB에 업데이트',
+    description: '선택한 여러 페이지의 벡터 데이터를 업데이트',
+  })
+  @ApiResponse({ status: 200, description: '페이지 업데이트 완료' })
+  @ApiResponse({ status: 401, description: '인증 필요' })
+  @ApiResponse({ status: 403, description: '권한 없음' })
+  async updatePages(@Body() body: UpdatePagesDto) {
+    return await this.ragService.updatePages(body.pageIds);
+  }
+
+  @Post('admin/update-all')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUB_ADMIN)
+  @ApiOperation({
+    summary: '[관리자] 전체 데이터베이스의 모든 페이지 업데이트',
+    description: 'Notion DB의 모든 페이지를 벡터 DB에 업데이트',
+  })
+  @ApiResponse({ status: 200, description: '전체 업데이트 완료' })
+  @ApiResponse({ status: 401, description: '인증 필요' })
+  @ApiResponse({ status: 403, description: '권한 없음' })
+  async updateAll(@Body() body: IngestDto) {
+    return await this.ragService.updateAllPages(body.databaseId);
   }
 }

@@ -46,16 +46,16 @@ async function bootstrap() {
     )
     .build();
   const document = SwaggerModule.createDocument(app, config);
-  
+
   // Swagger UI 설정
   SwaggerModule.setup('api', app, document);
-  
+
   // OpenAPI Generator를 위한 JSON 스펙 엔드포인트
   app.getHttpAdapter().get('/api-json', (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.send(document);
   });
-  
+
   // OpenAPI Generator를 위한 YAML 스펙 엔드포인트 (선택사항)
   // YAML을 사용하려면 js-yaml 패키지가 필요합니다
 

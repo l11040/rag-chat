@@ -1,8 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { NotionService } from '../notion/notion.service';
 import { OpenAIService } from '../openai/openai.service';
 import { QdrantService } from '../qdrant/qdrant.service';
+import {
+  NotionPage as NotionPageEntity,
+  IndexingStatus,
+} from '../notion/entities/notion-page.entity';
 import { randomUUID } from 'crypto';
 
 // Define the shape of a Qdrant search result
@@ -59,7 +65,7 @@ interface NotionRichText {
   [key: string]: unknown;
 }
 
-interface NotionPage {
+interface NotionPageResponse {
   id: string;
   url: string;
   properties: Record<string, NotionProperty>;
@@ -97,6 +103,8 @@ export class RagService {
     private readonly openaiService: OpenAIService,
     private readonly qdrantService: QdrantService,
     private readonly configService: ConfigService,
+    @InjectRepository(NotionPageEntity)
+    private readonly notionPageRepository: Repository<NotionPageEntity>,
   ) {}
 
   async ingestNotionDatabase(databaseId?: string) {
@@ -121,7 +129,7 @@ export class RagService {
     // 2. Notion 데이터베이스에서 페이지 목록 가져오기
     const pages = (await this.notionService.getDatabase(
       targetDatabaseId,
-    )) as NotionPage[];
+    )) as NotionPageResponse[];
     this.logger.log(`Found ${pages.length} pages`);
 
     let totalChunks = 0;
@@ -215,7 +223,7 @@ export class RagService {
   /**
    * Notion 페이지에서 제목 추출
    */
-  private extractPageTitle(page: NotionPage): string {
+  private extractPageTitle(page: NotionPageResponse): string {
     try {
       // Notion 페이지의 properties에서 title 속성 찾기
       const properties = page.properties;
@@ -651,6 +659,371 @@ export class RagService {
         answer: '답변 생성 중 오류가 발생했습니다.',
         error: (error as Error).message,
         sources: [],
+      };
+    }
+  }
+
+  /**
+   * Notion 페이지 목록을 데이터베이스에 동기화 (메타데이터만)
+   */
+  async syncNotionPages(databaseId?: string) {
+    try {
+      const targetDatabaseId =
+        databaseId || this.configService.get<string>('NOTION_DATABASE_ID');
+
+      if (!targetDatabaseId) {
+        throw new Error(
+          'Database ID must be provided either as parameter or in NOTION_DATABASE_ID environment variable',
+        );
+      }
+
+      this.logger.log(
+        `Syncing Notion pages from database: ${targetDatabaseId}`,
+      );
+
+      // Notion에서 페이지 목록 가져오기
+      const pages = (await this.notionService.getDatabase(
+        targetDatabaseId,
+      )) as NotionPageResponse[];
+
+      let created = 0;
+      let updated = 0;
+
+      // 각 페이지를 데이터베이스에 저장/업데이트
+      for (const page of pages) {
+        const pageId = page.id;
+        const pageUrl = page.url;
+        const pageTitle = this.extractPageTitle(page);
+
+        // 기존 페이지 찾기
+        let notionPage = await this.notionPageRepository.findOne({
+          where: { notionPageId: pageId },
+        });
+
+        if (notionPage) {
+          // 기존 페이지 업데이트
+          notionPage.title = pageTitle;
+          notionPage.url = pageUrl;
+          notionPage.databaseId = targetDatabaseId;
+          notionPage.lastModifiedAt = new Date();
+          await this.notionPageRepository.save(notionPage);
+          updated++;
+        } else {
+          // 새 페이지 생성
+          notionPage = this.notionPageRepository.create({
+            notionPageId: pageId,
+            title: pageTitle,
+            url: pageUrl,
+            databaseId: targetDatabaseId,
+            indexingStatus: IndexingStatus.PENDING,
+            chunkCount: 0,
+          });
+          await this.notionPageRepository.save(notionPage);
+          created++;
+        }
+      }
+
+      this.logger.log(
+        `Sync complete. Created: ${created}, Updated: ${updated}, Total: ${pages.length}`,
+      );
+
+      return {
+        success: true,
+        created,
+        updated,
+        total: pages.length,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to sync Notion pages: ${(error as Error).message}`,
+      );
+      return {
+        success: false,
+        error: (error as Error).message,
+      };
+    }
+  }
+
+  /**
+   * 데이터베이스에서 페이지 목록 조회
+   */
+  async getPageList(databaseId?: string) {
+    try {
+      const where: { databaseId?: string } = {};
+      if (databaseId) {
+        where.databaseId = databaseId;
+      }
+
+      const pages = await this.notionPageRepository.find({
+        where,
+        order: { updatedAt: 'DESC' },
+      });
+
+      return {
+        success: true,
+        pages: pages.map((page) => ({
+          id: page.id,
+          notionPageId: page.notionPageId,
+          title: page.title,
+          url: page.url,
+          databaseId: page.databaseId,
+          chunkCount: page.chunkCount,
+          indexingStatus: page.indexingStatus,
+          lastIndexedAt: page.lastIndexedAt,
+          lastModifiedAt: page.lastModifiedAt,
+          errorMessage: page.errorMessage,
+          createdAt: page.createdAt,
+          updatedAt: page.updatedAt,
+        })),
+        total: pages.length,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to get page list: ${(error as Error).message}`);
+      return {
+        success: false,
+        error: (error as Error).message,
+        pages: [],
+        total: 0,
+      };
+    }
+  }
+
+  /**
+   * 특정 페이지를 벡터 DB에 업데이트 (기존 데이터 삭제 후 재생성)
+   */
+  async updatePage(pageId: string) {
+    try {
+      this.logger.log(`Updating page: ${pageId}`);
+
+      // 데이터베이스에서 페이지 찾기 (id 또는 notionPageId로 검색)
+      let notionPage = await this.notionPageRepository.findOne({
+        where: { id: pageId },
+      });
+
+      // id로 찾지 못하면 notionPageId로 검색
+      if (!notionPage) {
+        notionPage = await this.notionPageRepository.findOne({
+          where: { notionPageId: pageId },
+        });
+      }
+
+      if (!notionPage) {
+        throw new Error(`Page not found in database: ${pageId}`);
+      }
+
+      // 실제 Notion 페이지 ID 사용
+      const notionPageId = notionPage.notionPageId;
+
+      // 인덱싱 상태를 PROCESSING으로 변경
+      notionPage.indexingStatus = IndexingStatus.PROCESSING;
+      notionPage.errorMessage = null;
+      await this.notionPageRepository.save(notionPage);
+
+      try {
+        // 1. 기존 벡터 데이터 삭제 (Qdrant에는 notionPageId가 저장되어 있음)
+        const deleteResult = await this.qdrantService.deletePagePoints(
+          this.COLLECTION_NAME,
+          notionPageId,
+        );
+        this.logger.log(
+          `Deleted ${deleteResult.deleted} existing vectors for page: ${notionPageId}`,
+        );
+
+        // 2. Notion에서 페이지 내용 가져오기
+        const blocks = (await this.notionService.getPageContent(
+          notionPageId,
+        )) as NotionBlock[];
+
+        // 3. 블록을 텍스트로 변환
+        const fullText = this.blocksToText(blocks);
+        this.logger.log(`Extracted text length: ${fullText.length} characters`);
+
+        if (!fullText.trim()) {
+          notionPage.indexingStatus = IndexingStatus.COMPLETED;
+          notionPage.chunkCount = 0;
+          notionPage.lastIndexedAt = new Date();
+          await this.notionPageRepository.save(notionPage);
+          return {
+            success: true,
+            message: 'Page has no text content',
+            chunksCreated: 0,
+          };
+        }
+
+        // 4. 텍스트를 청크로 분할
+        const chunks = this.splitTextIntoChunks(fullText);
+        this.logger.log(`Split into ${chunks.length} chunks`);
+
+        // 5. 각 청크에 대해 임베딩 생성 및 저장
+        let chunksCreated = 0;
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i];
+          const { embedding } = await this.openaiService.getEmbedding(chunk);
+
+          // 6. Qdrant에 저장 (UUID 생성)
+          const pointId = randomUUID();
+          await this.qdrantService.upsertPoints(this.COLLECTION_NAME, [
+            {
+              id: pointId,
+              vector: embedding,
+              payload: {
+                text: chunk,
+                pageId: notionPageId, // Qdrant에는 notionPageId를 저장
+                pageUrl: notionPage.url,
+                pageTitle: notionPage.title,
+                chunkIndex: i,
+                totalChunks: chunks.length,
+              },
+            },
+          ]);
+
+          chunksCreated++;
+        }
+
+        // 7. 데이터베이스 업데이트
+        notionPage.indexingStatus = IndexingStatus.COMPLETED;
+        notionPage.chunkCount = chunksCreated;
+        notionPage.lastIndexedAt = new Date();
+        notionPage.errorMessage = null;
+        await this.notionPageRepository.save(notionPage);
+
+        this.logger.log(
+          `Successfully updated page: ${notionPage.title} (${chunksCreated} chunks)`,
+        );
+
+        return {
+          success: true,
+          message: 'Page updated successfully',
+          pageTitle: notionPage.title,
+          chunksCreated,
+          deletedChunks: deleteResult.deleted,
+        };
+      } catch (error) {
+        // 에러 발생 시 상태 업데이트
+        notionPage.indexingStatus = IndexingStatus.FAILED;
+        notionPage.errorMessage = (error as Error).message;
+        await this.notionPageRepository.save(notionPage);
+
+        throw error;
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to update page ${pageId}: ${(error as Error).message}`,
+      );
+      return {
+        success: false,
+        error: (error as Error).message,
+      };
+    }
+  }
+
+  /**
+   * 여러 페이지를 벡터 DB에 업데이트
+   */
+  async updatePages(pageIds: string[]) {
+    const results: Array<{
+      pageId: string;
+      success: boolean;
+      message?: string;
+      chunksCreated?: number;
+      deletedChunks?: number;
+      pageTitle?: string;
+      error?: string;
+    }> = [];
+
+    for (const pageId of pageIds) {
+      const result = await this.updatePage(pageId);
+      results.push({
+        pageId,
+        ...result,
+      });
+    }
+
+    return {
+      success: true,
+      results,
+      total: pageIds.length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
+    };
+  }
+
+  /**
+   * 전체 데이터베이스의 모든 페이지를 벡터 DB에 업데이트
+   * (ingestNotionDatabase 개선 버전)
+   */
+  async updateAllPages(databaseId?: string) {
+    try {
+      const targetDatabaseId =
+        databaseId || this.configService.get<string>('NOTION_DATABASE_ID');
+
+      if (!targetDatabaseId) {
+        throw new Error(
+          'Database ID must be provided either as parameter or in NOTION_DATABASE_ID environment variable',
+        );
+      }
+
+      this.logger.log(`Starting full update for database: ${targetDatabaseId}`);
+
+      // 1. 먼저 페이지 목록 동기화
+      const syncResult = await this.syncNotionPages(targetDatabaseId);
+      if (!syncResult.success) {
+        throw new Error(`Failed to sync pages: ${syncResult.error}`);
+      }
+
+      // 2. Qdrant 컬렉션 생성 (이미 존재하면 무시됨)
+      await this.qdrantService.createCollection(
+        this.COLLECTION_NAME,
+        this.VECTOR_SIZE,
+      );
+
+      // 3. 데이터베이스에서 모든 페이지 가져오기
+      const pages = await this.notionPageRepository.find({
+        where: { databaseId: targetDatabaseId },
+      });
+
+      this.logger.log(`Found ${pages.length} pages to process`);
+
+      let totalChunks = 0;
+      let pagesProcessed = 0;
+      let pagesFailed = 0;
+
+      // 4. 각 페이지 처리
+      for (const notionPage of pages) {
+        try {
+          const result = await this.updatePage(notionPage.notionPageId);
+          if (result.success) {
+            totalChunks += result.chunksCreated || 0;
+            pagesProcessed++;
+          } else {
+            pagesFailed++;
+          }
+        } catch (error) {
+          this.logger.error(
+            `Failed to process page ${notionPage.notionPageId}: ${(error as Error).message}`,
+          );
+          pagesFailed++;
+        }
+      }
+
+      this.logger.log(
+        `Full update complete. Processed: ${pagesProcessed}, Failed: ${pagesFailed}, Total chunks: ${totalChunks}`,
+      );
+
+      return {
+        success: true,
+        pagesProcessed,
+        pagesFailed,
+        totalPages: pages.length,
+        totalChunks,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to update all pages: ${(error as Error).message}`,
+      );
+      return {
+        success: false,
+        error: (error as Error).message,
       };
     }
   }

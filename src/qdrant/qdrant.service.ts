@@ -85,4 +85,50 @@ export class QdrantService implements OnModuleInit {
   getClient(): QdrantClient {
     return this.qdrantClient;
   }
+
+  /**
+   * 특정 페이지의 모든 벡터 포인트 삭제
+   * @param collectionName 컬렉션 이름
+   * @param pageId 삭제할 페이지 ID
+   */
+  async deletePagePoints(
+    collectionName: string,
+    pageId: string,
+  ): Promise<{ deleted: number }> {
+    try {
+      // 먼저 해당 pageId를 가진 모든 포인트를 찾기
+      const scrollResult = await this.qdrantClient.scroll(collectionName, {
+        filter: {
+          must: [
+            {
+              key: 'pageId',
+              match: {
+                value: pageId,
+              },
+            },
+          ],
+        },
+        limit: 10000, // 충분히 큰 수
+        with_payload: false,
+        with_vector: false,
+      });
+
+      const pointIds = scrollResult.points.map((point) => point.id);
+
+      if (pointIds.length === 0) {
+        return { deleted: 0 };
+      }
+
+      // 찾은 포인트들 삭제
+      await this.qdrantClient.delete(collectionName, {
+        wait: true,
+        points: pointIds,
+      });
+
+      return { deleted: pointIds.length };
+    } catch (error) {
+      console.error(`Error deleting page points: ${error}`);
+      throw error;
+    }
+  }
 }
