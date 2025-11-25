@@ -4,6 +4,7 @@ import { RagController } from './rag.controller';
 import { NotionModule } from '../notion/notion.module';
 import { OpenAIModule } from '../openai/openai.module';
 import { QdrantModule } from '../qdrant/qdrant.module';
+import { ConversationModule } from '../conversation/conversation.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotionPage } from '../notion/entities/notion-page.entity';
 
@@ -12,6 +13,7 @@ import { NotionPage } from '../notion/entities/notion-page.entity';
     NotionModule,
     OpenAIModule,
     QdrantModule,
+    ConversationModule,
     TypeOrmModule.forFeature([NotionPage]),
   ],
   controllers: [RagController],

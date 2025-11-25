@@ -6,6 +6,7 @@ import {
   Get,
   UseGuards,
   Query,
+  Request,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -28,6 +29,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { RagService } from './rag.service';
+import { ConversationService } from '../conversation/conversation.service';
+import { MessageRole } from '../conversation/entities/message.entity';
 
 class IngestDto {
   @ApiProperty({
@@ -67,7 +70,15 @@ class QueryDto {
 
   @ApiProperty({
     required: false,
-    description: '이전 대화 히스토리 (연속적인 대화를 위한 컨텍스트)',
+    description: '대화 ID (기존 대화를 이어서 진행할 경우)',
+  })
+  @IsOptional()
+  @IsString()
+  conversationId?: string;
+
+  @ApiProperty({
+    required: false,
+    description: '이전 대화 히스토리 (연속적인 대화를 위한 컨텍스트, conversationId가 있으면 무시됨)',
     type: [ConversationMessage],
   })
   @IsOptional()
@@ -105,7 +116,10 @@ class UpdatePagesDto {
 export class RagController {
   private readonly logger = new Logger(RagController.name);
 
-  constructor(private readonly ragService: RagService) {}
+  constructor(
+    private readonly ragService: RagService,
+    private readonly conversationService: ConversationService,
+  ) {}
 
   @Post('ingest')
   @ApiOperation({
@@ -129,12 +143,73 @@ export class RagController {
     description: 'LLM이 생성한 답변과 인용된 문서 정보 반환',
   })
   @ApiResponse({ status: 401, description: '인증 필요' })
-  async query(@Body() body: QueryDto) {
+  async query(
+    @Request() req: { user: { id: string } },
+    @Body() body: QueryDto,
+  ) {
+    let conversationId = body.conversationId;
+    let conversationHistory = body.conversationHistory;
+
+    // conversationId가 제공된 경우, 해당 대화의 히스토리를 로드
+    if (conversationId) {
+      // 대화가 존재하고 사용자 소유인지 확인
+      const exists = await this.conversationService.conversationExists(
+        conversationId,
+        req.user.id,
+      );
+      if (!exists) {
+        return {
+          success: false,
+          error: '대화를 찾을 수 없거나 접근 권한이 없습니다.',
+        };
+      }
+
+      // 대화 히스토리 로드
+      conversationHistory =
+        await this.conversationService.getConversationHistory(
+          conversationId,
+          req.user.id,
+        );
+    } else {
+      // conversationId가 없으면 새 대화 생성
+      const conversation = await this.conversationService.createConversation(
+        req.user.id,
+        body.question.substring(0, 100), // 첫 질문을 제목으로 사용
+      );
+      conversationId = conversation.id;
+    }
+
+    // 질문 메시지 저장
+    await this.conversationService.addMessage(
+      conversationId,
+      MessageRole.USER,
+      body.question,
+    );
+
+    // RAG 쿼리 실행
     const result = await this.ragService.query(
       body.question,
-      body.conversationHistory,
+      conversationHistory,
     );
-    return result;
+
+    // 답변 메시지 저장
+    if (result.success) {
+      await this.conversationService.addMessage(
+        conversationId,
+        MessageRole.ASSISTANT,
+        result.answer,
+        {
+          sources: result.sources,
+          usage: result.usage,
+          rewrittenQuery: result.rewrittenQuery,
+        },
+      );
+    }
+
+    return {
+      ...result,
+      conversationId, // conversationId 반환
+    };
   }
 
   @Get('collection-info')

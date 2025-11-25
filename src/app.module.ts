@@ -10,6 +10,7 @@ import { NotionModule } from './notion/notion.module';
 import { OpenAIModule } from './openai/openai.module';
 import { RagModule } from './rag/rag.module';
 import { AuthModule } from './auth/auth.module';
+import { ConversationModule } from './conversation/conversation.module';
 import { getTypeOrmConfig } from './database/typeorm.config';
 
 @Module({
@@ -33,6 +34,7 @@ import { getTypeOrmConfig } from './database/typeorm.config';
     OpenAIModule,
     RagModule,
     AuthModule,
+    ConversationModule,
   ],
   controllers: [AppController],
   providers: [
