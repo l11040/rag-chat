@@ -131,4 +131,50 @@ export class QdrantService implements OnModuleInit {
       throw error;
     }
   }
+
+  /**
+   * 특정 Swagger 문서의 모든 벡터 포인트 삭제
+   * @param collectionName 컬렉션 이름
+   * @param swaggerDocumentId 삭제할 Swagger 문서 ID
+   */
+  async deleteSwaggerDocumentPoints(
+    collectionName: string,
+    swaggerDocumentId: string,
+  ): Promise<number> {
+    try {
+      // 해당 swaggerDocumentId를 가진 모든 포인트를 찾기
+      const scrollResult = await this.qdrantClient.scroll(collectionName, {
+        filter: {
+          must: [
+            {
+              key: 'swaggerDocumentId',
+              match: {
+                value: swaggerDocumentId,
+              },
+            },
+          ],
+        },
+        limit: 10000, // 충분히 큰 수
+        with_payload: false,
+        with_vector: false,
+      });
+
+      const pointIds = scrollResult.points.map((point) => point.id);
+
+      if (pointIds.length === 0) {
+        return 0;
+      }
+
+      // 찾은 포인트들 삭제
+      await this.qdrantClient.delete(collectionName, {
+        wait: true,
+        points: pointIds,
+      });
+
+      return pointIds.length;
+    } catch (error) {
+      console.error(`Error deleting Swagger document points: ${error}`);
+      throw error;
+    }
+  }
 }

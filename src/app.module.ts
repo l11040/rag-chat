@@ -12,6 +12,7 @@ import { RagModule } from './rag/rag.module';
 import { AuthModule } from './auth/auth.module';
 import { ConversationModule } from './conversation/conversation.module';
 import { TokenUsageModule } from './token-usage/token-usage.module';
+import { SwaggerModule } from './swagger/swagger.module';
 import { getTypeOrmConfig } from './database/typeorm.config';
 
 @Module({
@@ -37,6 +38,7 @@ import { getTypeOrmConfig } from './database/typeorm.config';
     AuthModule,
     ConversationModule,
     TokenUsageModule,
+    SwaggerModule,
   ],
   controllers: [AppController],
   providers: [
