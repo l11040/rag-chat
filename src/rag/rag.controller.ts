@@ -30,6 +30,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { RagService } from './rag.service';
 import { ConversationService } from '../conversation/conversation.service';
+import { TokenUsageService } from '../token-usage/token-usage.service';
 import { MessageRole } from '../conversation/entities/message.entity';
 
 class IngestDto {
@@ -119,6 +120,7 @@ export class RagController {
   constructor(
     private readonly ragService: RagService,
     private readonly conversationService: ConversationService,
+    private readonly tokenUsageService: TokenUsageService,
   ) {}
 
   @Post('ingest')
@@ -194,7 +196,7 @@ export class RagController {
 
     // 답변 메시지 저장
     if (result.success) {
-      await this.conversationService.addMessage(
+      const savedMessage = await this.conversationService.addMessage(
         conversationId,
         MessageRole.ASSISTANT,
         result.answer,
@@ -204,6 +206,28 @@ export class RagController {
           rewrittenQuery: result.rewrittenQuery,
         },
       );
+
+      // 토큰 사용량 저장
+      if (result.usage) {
+        try {
+          await this.tokenUsageService.saveTokenUsage(
+            req.user.id,
+            {
+              promptTokens: result.usage.promptTokens,
+              completionTokens: result.usage.completionTokens,
+              totalTokens: result.usage.totalTokens,
+            },
+            conversationId,
+            savedMessage.id, // 메시지 ID 추가
+            body.question,
+          );
+        } catch (error) {
+          // 토큰 사용량 저장 실패는 로그만 남기고 계속 진행
+          this.logger.error(
+            `토큰 사용량 저장 실패: ${(error as Error).message}`,
+          );
+        }
+      }
     }
 
     return {

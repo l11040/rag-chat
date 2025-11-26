@@ -11,6 +11,7 @@ import { OpenAIModule } from './openai/openai.module';
 import { RagModule } from './rag/rag.module';
 import { AuthModule } from './auth/auth.module';
 import { ConversationModule } from './conversation/conversation.module';
+import { TokenUsageModule } from './token-usage/token-usage.module';
 import { getTypeOrmConfig } from './database/typeorm.config';
 
 @Module({
@@ -35,6 +36,7 @@ import { getTypeOrmConfig } from './database/typeorm.config';
     RagModule,
     AuthModule,
     ConversationModule,
+    TokenUsageModule,
   ],
   controllers: [AppController],
   providers: [
