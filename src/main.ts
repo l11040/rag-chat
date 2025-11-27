@@ -7,6 +7,9 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // 타임아웃 설정 (파일 업로드 등 긴 작업을 위해 5분으로 설정)
+  app.getHttpAdapter().getInstance().timeout = 300000; // 5분 (300초)
+
   // 보안 헤더 설정 (Helmet)
   app.use(helmet());
 

@@ -322,16 +322,18 @@ ${contextText}
     };
   }> {
     try {
-      // API 컨텍스트를 구조화된 형식으로 변환 (엔드포인트를 식별자로 사용)
+      // API 컨텍스트를 구조화된 형식으로 변환 (fullText 우선 사용)
       const contextText = contextApis
-        .map((api) => {
+        .map((api, index) => {
           // API 식별자 생성: 엔드포인트 또는 기능 설명
           const apiIdentifier = api.summary
             ? `${api.summary} (${api.endpoint})`
             : api.endpoint;
 
-          return `[API: ${apiIdentifier}]
-엔드포인트: ${api.endpoint}
+          // fullText가 있으면 우선 사용 (더 상세한 정보 포함)
+          const apiDetails = api.fullText
+            ? api.fullText
+            : `엔드포인트: ${api.endpoint}
 메서드: ${api.method}
 경로: ${api.path}
 요약: ${api.summary || '없음'}
@@ -339,210 +341,153 @@ ${contextText}
 태그: ${api.tags?.join(', ') || '없음'}
 ${api.parametersText ? `\n파라미터:\n${api.parametersText}` : ''}
 ${api.requestBodyText ? `\n요청 본문:\n${api.requestBodyText}` : ''}
-${api.responsesText ? `\n응답:\n${api.responsesText}` : ''}
+${api.responsesText ? `\n응답:\n${api.responsesText}` : ''}`;
+
+          return `[API ${index + 1}: ${apiIdentifier}]
+${apiDetails}
 ${api.swaggerUrl ? `\nSwagger URL: ${api.swaggerUrl}` : ''}
 `;
         })
-        .join('\n---\n\n');
+        .join('\n\n---\n\n');
 
-      // Swagger API 질문에 특화된 시스템 프롬프트
-      const systemPrompt = `당신은 Swagger API 문서를 기반으로 API 사용법을 안내하는 전문가입니다.
+      // 프론트엔드 개발자 관점의 Swagger API 가이드 프롬프트
+      const systemPrompt = `당신은 프론트엔드 개발자를 위한 API 구현 가이드를 제공하는 전문가입니다. 사용자의 요구사항을 파악하여 어떤 API를 사용해야 하는지, 어떻게 구현하면 좋을지 친절하고 실용적으로 설명합니다.
 
 핵심 원칙:
-1. **정확성**: 제공된 API 정보만을 사용하여 정확한 답변 제공
-2. **구조화**: 마크다운 형식으로 명확하게 구조화하여 전달
-3. **가독성**: 요청/응답/에러를 명확히 구분하여 표시
-4. **간결성**: 불필요한 코드 예시 없이 핵심 정보만 제공
+1. **요구사항 파악**: 사용자의 질문에서 실제로 구현하고자 하는 기능을 먼저 파악
+2. **실용적 가이드**: 코드가 아닌 말로 구현 방법과 흐름을 설명
+3. **API 추천**: 요구사항에 맞는 API를 찾아서 추천하고, 왜 그 API가 적합한지 설명
+4. **구현 흐름**: 여러 API를 조합해야 할 경우, 어떤 순서로 호출해야 하는지 단계별로 설명
+5. **주의사항**: 구현 시 주의해야 할 점이나 고려사항을 함께 안내
 
-답변 형식 규칙 (반드시 준수):
+답변 구조:
 
-## API 사용법 질문의 경우
+## 1. 요구사항 파악 및 추천 API
 
-### API 정보
-- **엔드포인트**: \`METHOD /path\`
-- **설명**: API의 목적과 기능
+사용자의 질문을 분석하여:
+- 어떤 기능을 구현하려는지 파악
+- 그 기능을 구현하기 위해 필요한 API 추천
+- 각 API가 왜 필요한지 간단히 설명
 
-### 요청 정보
+예시:
+"건강 검진 관련 기능을 구현하려면 다음 API들을 사용할 수 있습니다:
+- 건강 검진 목록 조회 API (GET /api/health-checkups)
+- 건강 검진 상세 조회 API (GET /api/health-checkups/{id})
+- 건강 검진 예약 API (POST /api/health-checkups/{id}/reserve)"
 
-#### 파라미터
-| 이름 | 타입 | 위치 | 필수 | 설명 | 예시 |
-|------|------|------|------|------|------|
-| param1 | string | query | 예 | 파라미터 설명 | 예시값 |
+## 2. 구현 방법 설명
 
-#### 헤더
-| 이름 | 타입 | 필수 | 설명 |
-|------|------|------|------|
-| Content-Type | string | 예 | application/json |
-| Authorization | string | 예 | Bearer {token} |
+### 단계별 구현 흐름
 
-#### 요청 본문
+각 API를 언제, 어떤 순서로 호출해야 하는지 설명:
+
+예시:
+"건강 검진 목록을 보여주는 화면을 구현하려면:
+1. 먼저 건강 검진 목록 조회 API를 호출하여 사용 가능한 검진 목록을 가져옵니다
+2. 목록에서 사용자가 선택한 검진의 ID를 사용하여 상세 조회 API를 호출합니다
+3. 상세 정보를 확인한 후, 예약 API를 호출하여 검진을 예약합니다"
+
+### 각 API의 역할과 사용 시점
+
+- 언제 이 API를 호출해야 하는지
+- 어떤 데이터가 필요한지
+- 응답 데이터를 어떻게 활용해야 하는지
+
+## 3. API 상세 정보
+
+### [API 이름/기능]
+
+**엔드포인트**: \`METHOD /path\`
+
+**언제 사용하나요?**
+- 이 API를 호출해야 하는 상황과 시점
+
+**필요한 정보**
+- 요청에 포함해야 하는 파라미터나 데이터
+- 인증이 필요한지 여부
+
+**요청 예시**
 \`\`\`json
 {
-  "field1": "값",
-  "field2": 123
+  "필드명": "설명"
 }
 \`\`\`
 
-**요청 본문 필드 설명:**
-- \`field1\` (string, 필수): 필드 설명
-- \`field2\` (number, 선택): 필드 설명
-
-### 응답 정보
-
-#### 성공 응답 (200 OK)
+**응답 예시**
 \`\`\`json
 {
-  "success": true,
-  "data": {
-    "id": "uuid",
-    "name": "예시"
-  }
+  "응답필드": "설명"
 }
 \`\`\`
 
-**응답 필드 설명:**
-- \`success\` (boolean): 요청 성공 여부
-- \`data.id\` (string): 생성된 리소스 ID
-- \`data.name\` (string): 리소스 이름
+**응답 데이터 활용**
+- 받은 응답을 어떻게 처리하고 화면에 표시할지
 
-#### 에러 응답
+**주의사항**
+- 에러 처리 방법
+- 특별히 주의해야 할 점
 
-**400 Bad Request**
-\`\`\`json
-{
-  "error": "잘못된 요청",
-  "message": "필수 필드가 누락되었습니다."
-}
-\`\`\`
+## 4. 구현 팁 및 주의사항
 
-**404 Not Found**
-\`\`\`json
-{
-  "error": "리소스를 찾을 수 없음",
-  "message": "요청한 리소스가 존재하지 않습니다."
-}
-\`\`\`
+- 여러 API를 조합할 때의 순서나 타이밍
+- 에러 처리 방법
+- 로딩 상태 관리
+- 사용자 경험을 위한 추가 고려사항
 
-**500 Internal Server Error**
-\`\`\`json
-{
-  "error": "서버 오류",
-  "message": "서버에서 오류가 발생했습니다."
-}
-\`\`\`
-
-## 여러 API 조합 질문의 경우
-
-각 API를 단계별로 구분하여 표시:
-
-### 단계 1: [API 이름]
-[위의 형식으로 각 API 설명]
-
-### 단계 2: [API 이름]
-[위의 형식으로 각 API 설명]
-
-## 테스트 데이터 요청의 경우
-
-### 테스트 데이터
-\`\`\`json
-{
-  "field1": "실제 사용 가능한 값",
-  "field2": 123,
-  "field3": "2024-01-01T00:00:00Z"
-}
-\`\`\`
-
-**주의사항:**
-- 필수 필드는 반드시 포함
-- 실제 사용 가능한 형식의 값 사용 (유효한 UUID, 날짜 형식 등)
-
-## API 찾기 질문의 경우
-
-### 관련 API 목록
-
-1. **\`METHOD /path\`** - [요약]
-   - 설명: [설명]
-
-2. **\`METHOD /path\`** - [요약]
-   - 설명: [설명]
-
-답변 작성 필수 규칙:
-- 서론 없이 바로 답변 시작
-- 마크다운 제목(##, ###)을 사용하여 섹션 구분
-- 요청/응답/에러를 명확히 구분하여 표시
-- 표 형식을 적극 활용 (파라미터, 헤더, 필드 설명 등)
-- JSON 코드 블록은 json 태그만 사용
-- 실제 사용 가능한 값으로 예시 작성
-- 제공된 API 정보에 없는 내용은 절대 추가하지 않음
+답변 작성 규칙:
+- 서론 없이 바로 요구사항 파악부터 시작
+- 사용자가 프론트엔드 개발자라고 가정하고 답변
+- 코드 예시는 제공하지 않고, 말로 설명
+- API를 추천할 때는 왜 그 API가 필요한지 이유를 함께 설명
+- 구현 흐름을 단계별로 명확하게 설명
+- 제공된 API 정보에 없는 내용은 추가하지 않음
 - 정보가 없으면 "제공된 API 정보에는 이 내용이 없습니다."라고 명확히 안내
-- curl, JavaScript, Python 같은 코드 예시는 제공하지 않음
-- **중요**: API 인용 시 "[API 1]", "[API 2]" 같은 번호 형식은 절대 사용하지 마세요
-- API 인용은 실제 엔드포인트나 기능 설명을 사용하세요
-  - 예: "'GET' /api/documents/{id} API를 사용하면..." 
-  - 예: "문서 조회 API('GET' /api/documents/{id})를 사용하면..."
-  - 예: "회원가입 API(POST /auth/register)를 사용하면..."
-  - API 요약이 있으면: "회원가입 API('POST' /auth/register)를 사용하면..."
+- API 인용 시 실제 엔드포인트나 기능 설명을 사용
+  - 예: "건강 검진 목록 조회 API (GET /api/health-checkups)를 사용하면..."
+  - 예: "회원가입 API (POST /auth/register)를 호출하여..."
+- 친절하고 이해하기 쉽게 설명`;
 
-가독성 향상 팁:
-- 섹션을 명확히 구분 (### 요청 정보, ### 응답 정보)
-- 표를 사용하여 파라미터/헤더/필드 정보를 구조화
-- JSON 예시는 들여쓰기로 구조화
-- 응답과 에러를 별도 섹션으로 구분
-- 필드 설명은 요청 본문/응답 본문 아래에 별도로 표시`;
-
-      // 질문에서 의도 파악
-      const questionLower = question.toLowerCase();
-      const wantsHowTo =
-        questionLower.includes('어떻게') ||
-        questionLower.includes('방법') ||
-        questionLower.includes('사용');
-      const wantsTestData =
-        questionLower.includes('테스트') ||
-        questionLower.includes('예시 데이터') ||
-        questionLower.includes('샘플');
-      const wantsFindApi =
-        questionLower.includes('어떤') ||
-        questionLower.includes('찾') ||
-        questionLower.includes('있나') ||
-        questionLower.includes('api');
-
-      let answerGuidance = '';
-      if (wantsTestData) {
-        answerGuidance =
-          '\n\n중요: 테스트 데이터를 요청했으므로, ### 테스트 데이터 섹션을 만들고, 스키마에 맞는 유효한 JSON 형식을 코드 블록(json)으로 제공하세요. 필수 필드는 반드시 포함하고, 실제 사용 가능한 값으로 작성하세요.';
-      } else if (wantsHowTo) {
-        answerGuidance =
-          '\n\n중요: 사용법을 물어봤으므로, 반드시 다음 섹션 구조를 따라 답변하세요:\n- ### API 정보\n- ### 요청 정보 (파라미터 표, 헤더 표, 요청 본문 JSON, 필드 설명)\n- ### 응답 정보 (성공 응답 JSON, 응답 필드 설명, 에러 응답 JSON)\n각 섹션을 명확히 구분하고, 표와 JSON 코드 블록을 적극 활용하세요. curl, JavaScript, Python 같은 코드 예시는 제공하지 마세요.';
-      } else if (wantsFindApi) {
-        answerGuidance =
-          '\n\n중요: API 찾기를 요청했으므로, ### 관련 API 목록 섹션을 만들고, 각 API를 번호 리스트로 나열하세요. 각 API마다 엔드포인트(코드 형식), 요약, 설명을 포함하세요.';
-      } else {
-        // 기본 가이드
-        answerGuidance =
-          '\n\n중요: 답변은 반드시 마크다운 형식으로 구조화하세요. 요청 정보(파라미터 표, 헤더 표, 요청 본문 JSON, 필드 설명)와 응답 정보(성공/에러 응답 JSON, 필드 설명)를 명확히 구분하여 표시하세요. curl, JavaScript, Python 같은 코드 예시는 제공하지 마세요.';
-      }
-
-      const userPrompt = `다음 API 정보들을 참고하여 질문에 답변해주세요:
+      const userPrompt = `다음은 벡터 검색으로 찾은 API 정보들입니다. **반드시 이 정보들만을 참고하여** 질문에 답변해주세요:
 
 ${contextText}
 
-질문: ${question}
+---
 
-위 API 정보들에 있는 내용만을 사용하여, 사용자의 의도에 맞게 정확하고 실용적인 답변을 제공하세요.${answerGuidance}
+**질문**: ${question}
 
-답변 작성 시 반드시 준수할 사항:
+**중요 지시사항**:
+1. 위에 제공된 API 정보들([API 1], [API 2] 등)을 **반드시 참고**하여 답변하세요
+2. 제공된 API 정보에 없는 내용은 절대 추가하지 마세요
+3. 각 API의 엔드포인트, 메서드, 경로, 파라미터, 요청 본문, 응답 형식 등을 **정확히** 참고하세요
+4. 사용자의 질문과 관련된 API를 찾아서 추천하고, 그 API의 실제 정보를 바탕으로 설명하세요
+
+**답변 구조**:
+
+1. **요구사항 파악**: 사용자가 구현하려는 기능이 무엇인지 파악하고 설명
+2. **추천 API**: 위 API 정보 중에서 질문과 관련된 API를 찾아 추천하고, 각 API가 왜 필요한지 설명
+   - **반드시 위에 제공된 API 정보([API 1], [API 2] 등)를 참고하여 추천하세요**
+   - 각 API의 실제 엔드포인트, 메서드, 경로를 정확히 언급하세요
+3. **구현 방법**: 어떤 순서로 API를 호출해야 하는지, 각 단계에서 무엇을 해야 하는지 설명
+4. **API 상세 정보**: 추천한 각 API에 대해:
+   - 엔드포인트와 메서드
+   - 필요한 파라미터나 요청 본문 (위 API 정보에서 확인)
+   - 응답 형식 (위 API 정보에서 확인)
+   - 응답 데이터를 어떻게 활용할지
+5. **구현 팁**: 주의사항이나 추가 고려사항
+
+**답변 작성 시 반드시 준수할 사항**:
+- **제공된 API 정보([API 1], [API 2] 등)의 내용만을 사용하세요**
+- 프론트엔드 개발자가 이해하기 쉽게 친절하게 설명
+- 코드 예시는 제공하지 않고, 말로 구현 방법을 설명
+- API를 추천할 때는 위 API 정보에서 찾은 실제 API를 언급하고, 왜 그 API가 필요한지 이유를 함께 설명
+- 구현 흐름을 단계별로 명확하게 설명
 - 마크다운 제목(##, ###)을 사용하여 섹션 구분
-- 요청 정보와 응답 정보를 명확히 분리
-- 파라미터/헤더/필드는 표 형식으로 표시
-- JSON 코드 블록은 json 태그만 사용
-- 에러 응답은 별도 섹션으로 구분
-- **중요**: API 인용 시 "[API 1]", "[API 2]" 같은 번호 형식은 절대 사용하지 마세요
-- API 인용은 실제 엔드포인트나 기능 설명을 사용하세요
-  - 예: "'GET' /api/documents/{id} API를 사용하면..."
-  - 예: "문서 조회 API('GET' /api/documents/{id})를 사용하면..."
-  - API 요약이 있으면 요약과 엔드포인트를 함께 사용: "회원가입 API('POST' /auth/register)를 사용하면..."
-- curl, JavaScript, Python 같은 코드 예시는 제공하지 않음
-- 불필요한 설명은 제거하고 핵심만 전달`;
+- JSON 코드 블록은 json 태그만 사용 (요청/응답 예시용)
+- API 인용 시 실제 엔드포인트나 기능 설명을 사용
+  - 예: "건강 검진 목록 조회 API (GET /api/health-checkups)를 사용하면..."
+  - 예: "회원가입 API (POST /auth/register)를 호출하여..."
+- **제공된 API 정보에 없는 내용은 절대 추가하지 마세요**
+- 정보가 없으면 "제공된 API 정보에는 이 내용이 없습니다."라고 명확히 안내`;
 
       // 대화 히스토리가 있으면 메시지에 포함
       const messages: Array<{

@@ -9,13 +9,20 @@ import {
   HttpCode,
   HttpStatus,
   Request,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+  Logger,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
   ApiProperty,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
 import {
   IsString,
@@ -124,6 +131,8 @@ class ApiQueryDto {
 @Controller('swagger')
 @ApiBearerAuth('JWT-auth')
 export class SwaggerController {
+  private readonly logger = new Logger(SwaggerController.name);
+
   constructor(
     private readonly swaggerService: SwaggerService,
     private readonly conversationService: ConversationService,
@@ -241,7 +250,7 @@ export class SwaggerController {
   @Roles(Role.ADMIN, Role.SUB_ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: '[관리자] Swagger 문서 업로드',
+    summary: '[관리자] Swagger 문서 업로드 (URL)',
     description:
       'Swagger JSON URL을 입력받아 API 정보를 벡터DB에 저장합니다. 같은 키가 이미 존재하면 기존 데이터를 삭제하고 재업로드합니다.',
   })
@@ -266,6 +275,135 @@ export class SwaggerController {
       body.key,
       body.swaggerUrl,
     );
+  }
+
+  @Post('upload-file')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUB_ADMIN)
+  @UseInterceptors(FileInterceptor('file'))
+  @HttpCode(HttpStatus.OK)
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: '[관리자] Swagger 문서 업로드 (파일)',
+    description:
+      'Swagger JSON 파일을 직접 업로드하여 API 정보를 벡터DB에 저장합니다. 같은 키가 이미 존재하면 기존 데이터를 삭제하고 재업로드합니다.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        key: {
+          type: 'string',
+          description:
+            'Swagger 문서 고유 키 (영어, 숫자, 소문자, 언더스코어만 허용)',
+          example: 'rag_chat_api',
+        },
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Swagger JSON 파일',
+        },
+      },
+      required: ['key', 'file'],
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Swagger 문서 업로드 성공',
+  })
+  @ApiResponse({
+    status: 400,
+    description: '잘못된 요청 (유효하지 않은 파일 형식 등)',
+  })
+  @ApiResponse({
+    status: 401,
+    description: '인증 필요',
+  })
+  @ApiResponse({
+    status: 403,
+    description: '권한 없음 (관리자만 접근 가능)',
+  })
+  async uploadSwaggerFile(
+    @Body('key') key: string,
+    @UploadedFile() file: { buffer: Buffer; originalname: string } | undefined,
+  ) {
+    if (!file) {
+      throw new BadRequestException('파일이 제공되지 않았습니다.');
+    }
+
+    // 파일 확장자 검증
+    const fileName = file.originalname.toLowerCase();
+    if (!fileName.endsWith('.json')) {
+      throw new BadRequestException(
+        '지원하지 않는 파일 형식입니다. JSON 파일만 업로드 가능합니다.',
+      );
+    }
+
+    // 키 유효성 검증
+    if (!key || typeof key !== 'string') {
+      throw new BadRequestException('키가 제공되지 않았습니다.');
+    }
+
+    if (key.length < 1 || key.length > 100) {
+      throw new BadRequestException('키는 1자 이상 100자 이하여야 합니다.');
+    }
+
+    if (!/^[a-z0-9_]+$/.test(key)) {
+      throw new BadRequestException(
+        '키는 소문자 영어, 숫자, 언더스코어(_)만 사용할 수 있습니다.',
+      );
+    }
+
+    // 파일 내용을 JSON으로 파싱
+    let swaggerSpec: unknown;
+    try {
+      const fileContent = file.buffer.toString('utf-8');
+      const parsed: unknown = JSON.parse(fileContent);
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
+        throw new BadRequestException('유효하지 않은 Swagger JSON 형식입니다.');
+      }
+      swaggerSpec = parsed;
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(`JSON 파일 파싱 실패: ${errorMessage}`);
+    }
+
+    // 1. 먼저 문서를 생성하여 ID를 얻음
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
+    const swaggerDoc = (await this.swaggerService.createSwaggerDocument(
+      key,
+      swaggerSpec,
+    )) as { id: string; key: string; indexingStatus: string };
+
+    // 2. 비동기 처리: 백그라운드에서 실제 업로드 진행
+    const uploadPromise = this.swaggerService.uploadSwaggerDocumentFromJson(
+      key,
+      swaggerSpec,
+    ) as Promise<unknown>;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-floating-promises
+    uploadPromise.catch((error: unknown) => {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`백그라운드 Swagger 문서 업로드 실패: ${errorMessage}`);
+    });
+
+    // 3. 즉시 응답 반환 (문서 ID 포함)
+    return {
+      success: true,
+      message:
+        'Swagger 파일이 업로드되었습니다. 처리 중입니다. 상태는 문서 ID나 키로 확인할 수 있습니다.',
+      documentId: swaggerDoc.id,
+      key: swaggerDoc.key,
+      status: swaggerDoc.indexingStatus,
+    };
   }
 
   @Get('documents')

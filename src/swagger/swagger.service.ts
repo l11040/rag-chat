@@ -196,6 +196,7 @@ export class SwaggerService {
   private schemaToText(
     schema: unknown,
     schemas?: Record<string, unknown>,
+    visited: Set<string> = new Set(),
   ): string {
     if (!schema) return '';
 
@@ -205,10 +206,22 @@ export class SwaggerService {
     // $ref 참조 처리
     if (schemaObj.$ref && typeof schemaObj.$ref === 'string') {
       const refName = schemaObj.$ref.split('/').pop();
-      if (schemas && refName && schemas[refName]) {
-        return this.schemaToText(schemas[refName], schemas);
+      if (!refName) {
+        return '';
       }
-      return refName || '';
+
+      // 순환 참조 감지
+      if (visited.has(refName)) {
+        return `[순환 참조: ${refName}]`;
+      }
+
+      if (schemas && schemas[refName]) {
+        visited.add(refName);
+        const result = this.schemaToText(schemas[refName], schemas, visited);
+        visited.delete(refName);
+        return result;
+      }
+      return refName;
     }
 
     // 타입 정보
@@ -261,7 +274,7 @@ export class SwaggerService {
       for (const [propName, propSchema] of Object.entries(
         schemaObj.properties,
       )) {
-        const propText = this.schemaToText(propSchema, schemas);
+        const propText = this.schemaToText(propSchema, schemas, visited);
         const required = requiredArray.includes(propName) ? '(필수)' : '(선택)';
         props.push(`  - ${propName} ${required}: ${propText}`);
       }
@@ -272,7 +285,7 @@ export class SwaggerService {
 
     // 배열 아이템
     if (schemaObj.type === 'array' && schemaObj.items) {
-      const itemText = this.schemaToText(schemaObj.items, schemas);
+      const itemText = this.schemaToText(schemaObj.items, schemas, visited);
       parts.push(`배열 아이템: ${itemText}`);
     }
 
@@ -298,7 +311,7 @@ export class SwaggerService {
         paramParts.push('(필수)');
       }
       if (param.schema) {
-        const schemaText = this.schemaToText(param.schema);
+        const schemaText = this.schemaToText(param.schema, undefined, new Set());
         if (schemaText) {
           paramParts.push(schemaText);
         }
@@ -342,7 +355,11 @@ export class SwaggerService {
       )) {
         parts.push(`Content-Type: ${contentType}`);
         if (content.schema) {
-          const schemaText = this.schemaToText(content.schema, schemas);
+          const schemaText = this.schemaToText(
+            content.schema,
+            schemas,
+            new Set(),
+          );
           if (schemaText) {
             parts.push(`스키마:\n${schemaText}`);
           }
@@ -381,7 +398,11 @@ export class SwaggerService {
         for (const [contentType, content] of Object.entries(response.content)) {
           responseParts.push(`Content-Type: ${contentType}`);
           if (content.schema) {
-            const schemaText = this.schemaToText(content.schema, schemas);
+            const schemaText = this.schemaToText(
+              content.schema,
+              schemas,
+              new Set(),
+            );
             if (schemaText) {
               responseParts.push(`스키마:\n${schemaText}`);
             }
@@ -457,6 +478,223 @@ export class SwaggerService {
     }
 
     return parts.join('\n');
+  }
+
+  /**
+   * Swagger 문서를 생성합니다 (메타데이터만 저장)
+   */
+  async createSwaggerDocument(
+    key: string,
+    swaggerSpec: unknown,
+  ): Promise<SwaggerDocument> {
+    const spec = swaggerSpec as SwaggerSpec;
+    if (!spec || typeof spec !== 'object') {
+      throw new Error('유효하지 않은 Swagger 스펙입니다.');
+    }
+
+    // 기존 Swagger 문서 확인 (키 기준)
+    let swaggerDoc = await this.swaggerDocumentRepository.findOne({
+      where: { key },
+    });
+
+    if (swaggerDoc) {
+      // 기존 문서가 있으면 삭제 후 재생성
+      this.logger.log(
+        `Existing Swagger document found. Deleting old data for key: ${key}`,
+      );
+      await this.deleteSwaggerDocument(swaggerDoc.id);
+    }
+
+    // DB에 Swagger 문서 메타데이터 저장
+    swaggerDoc = this.swaggerDocumentRepository.create({
+      key,
+      swaggerUrl: null, // 파일 업로드의 경우 URL 없음
+      title: spec.info?.title || null,
+      version: spec.info?.version || null,
+      description: spec.info?.description || null,
+      indexingStatus: SwaggerIndexingStatus.PROCESSING,
+      apiCount: 0,
+    });
+    swaggerDoc = await this.swaggerDocumentRepository.save(swaggerDoc);
+
+    return swaggerDoc;
+  }
+
+  /**
+   * Swagger JSON 객체를 직접 받아서 벡터DB에 업로드합니다
+   */
+  async uploadSwaggerDocumentFromJson(
+    key: string,
+    swaggerSpec: unknown,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    swaggerDocument?: SwaggerDocument;
+    apiCount?: number;
+  }> {
+    this.logger.log(`Starting Swagger document upload from JSON: key=${key}`);
+
+    try {
+      // Swagger 스펙 타입 검증
+      const spec = swaggerSpec as SwaggerSpec;
+      if (!spec || typeof spec !== 'object') {
+        throw new Error('유효하지 않은 Swagger 스펙입니다.');
+      }
+
+      // 1. Swagger 문서 찾기 (이미 생성되어 있어야 함)
+      let swaggerDoc = await this.swaggerDocumentRepository.findOne({
+        where: { key },
+      });
+
+      if (!swaggerDoc) {
+        // 문서가 없으면 생성
+        swaggerDoc = await this.createSwaggerDocument(key, swaggerSpec);
+      }
+
+      // 2. 상태를 PROCESSING으로 업데이트
+      swaggerDoc.indexingStatus = SwaggerIndexingStatus.PROCESSING;
+      await this.swaggerDocumentRepository.save(swaggerDoc);
+
+      // 3. Qdrant 컬렉션 생성 (이미 존재하면 무시됨)
+      await this.qdrantService.createCollection(
+        this.COLLECTION_NAME,
+        this.VECTOR_SIZE,
+      );
+
+      // 4. API 정보 추출
+      const apis = this.extractApisFromSwagger(spec);
+      this.logger.log(`Extracted ${apis.length} APIs from Swagger spec`);
+
+      if (apis.length === 0) {
+        swaggerDoc.indexingStatus = SwaggerIndexingStatus.FAILED;
+        swaggerDoc.errorMessage = 'No APIs found in Swagger spec';
+        await this.swaggerDocumentRepository.save(swaggerDoc);
+        return {
+          success: false,
+          message: 'Swagger 스펙에서 API를 찾을 수 없습니다.',
+        };
+      }
+
+      // 스키마 정보 추출 (components.schemas)
+      const schemas = spec.components?.schemas || {};
+
+      // 5. 각 API를 벡터화하여 저장
+      let savedCount = 0;
+      for (const api of apis) {
+        try {
+          // API 정보를 텍스트로 변환 (스키마 정보 포함)
+          const apiText = this.formatApiForEmbedding(
+            api,
+            spec.info,
+            schemas,
+          );
+
+          // 임베딩 생성
+          const embeddingResult =
+            await this.openaiService.getEmbedding(apiText);
+
+          // Qdrant 포인트 생성 (UUID 사용하여 안전한 ID 생성)
+          const pointId = randomUUID();
+
+          // 상세 정보를 JSON으로 저장 (검색 결과에서 바로 사용 가능)
+          const parametersText = api.parameters
+            ? this.parametersToText(api.parameters)
+            : null;
+          const requestBodyText = api.requestBody
+            ? this.requestBodyToText(api.requestBody, schemas)
+            : null;
+          const responsesText = api.responses
+            ? this.responsesToText(api.responses, schemas)
+            : null;
+
+          // Qdrant에 저장
+          await this.qdrantService.upsertPoints(this.COLLECTION_NAME, [
+            {
+              id: pointId,
+              vector: embeddingResult.embedding,
+              payload: {
+                endpoint: `${api.method} ${api.path}`,
+                method: api.method,
+                path: api.path,
+                summary: api.summary,
+                description: api.description,
+                tags: api.tags,
+                operationId: api.operationId,
+                swaggerUrl: null, // 파일 업로드의 경우 URL 없음
+                swaggerDocumentId: swaggerDoc.id,
+                swaggerKey: key,
+                swaggerTitle: spec.info?.title || null,
+                swaggerVersion: spec.info?.version || null,
+                documentType: 'API',
+                // 상세 정보 추가
+                parameters: api.parameters || null,
+                parametersText: parametersText || null,
+                requestBody: api.requestBody || null,
+                requestBodyText: requestBodyText || null,
+                responses: api.responses || null,
+                responsesText: responsesText || null,
+                // 전체 텍스트 (검색 결과에서 바로 보여줄 수 있도록)
+                fullText: apiText,
+              },
+            },
+          ]);
+
+          savedCount++;
+        } catch (error) {
+          this.logger.error(
+            `Error processing API ${api.method} ${api.path}: ${error}`,
+          );
+          // 개별 API 실패는 건너뛰고 계속 진행
+        }
+      }
+
+      // 6. 저장 완료 로그
+      if (savedCount > 0) {
+        this.logger.log(`Saved ${savedCount} API vectors to Qdrant`);
+      }
+
+      // 7. DB 상태 업데이트
+      swaggerDoc.indexingStatus = SwaggerIndexingStatus.COMPLETED;
+      swaggerDoc.apiCount = savedCount;
+      swaggerDoc.lastIndexedAt = new Date();
+      swaggerDoc.errorMessage = null;
+      await this.swaggerDocumentRepository.save(swaggerDoc);
+
+      this.logger.log(
+        `Swagger document upload completed: key=${key}, APIs: ${savedCount}`,
+      );
+
+      return {
+        success: true,
+        message: 'Swagger 문서가 성공적으로 업로드되었습니다.',
+        swaggerDocument: swaggerDoc,
+        apiCount: savedCount,
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+
+      this.logger.error(
+        `Error uploading Swagger document from JSON: ${errorMessage}`,
+        errorStack,
+      );
+
+      // 에러 발생 시 DB 상태 업데이트
+      const swaggerDoc = await this.swaggerDocumentRepository.findOne({
+        where: { key },
+      });
+      if (swaggerDoc) {
+        swaggerDoc.indexingStatus = SwaggerIndexingStatus.FAILED;
+        swaggerDoc.errorMessage = errorMessage;
+        await this.swaggerDocumentRepository.save(swaggerDoc);
+      }
+
+      return {
+        success: false,
+        message: `Swagger 문서 업로드 실패: ${errorMessage}`,
+      };
+    }
   }
 
   /**
@@ -713,6 +951,15 @@ export class SwaggerService {
   }
 
   /**
+   * 키로 Swagger 문서를 조회합니다
+   */
+  async getSwaggerDocumentByKey(key: string): Promise<SwaggerDocument | null> {
+    return await this.swaggerDocumentRepository.findOne({
+      where: { key },
+    });
+  }
+
+  /**
    * Swagger API에 대한 질문에 답변 생성
    */
   async query(
@@ -788,7 +1035,7 @@ export class SwaggerService {
 
       const searchOptions: QdrantSearchOptions = {
         vector: embedding,
-        limit: 10, // 상위 10개 API 검색
+        limit: 5, // 상위 5개 API 검색 (컨텍스트 길이 제한을 위해 줄임)
       };
 
       // swaggerKey가 제공되면 필터 추가
@@ -873,8 +1120,23 @@ export class SwaggerService {
       }
 
       // 7. 검색된 API들을 LLM에 전달할 형식으로 변환
-      const contextApis = results.map((result) => {
+      // 컨텍스트 길이 제한을 위해 상위 결과만 사용 (최대 5개)
+      const maxContextApis = 5;
+      const limitedResults = results.slice(0, maxContextApis);
+      
+      const contextApis = limitedResults.map((result) => {
         const payload = result.payload;
+        // 컨텍스트를 압축하기 위해 상세 텍스트는 요약 버전만 사용
+        const parametersText = (payload.parametersText as string) || '';
+        const requestBodyText = (payload.requestBodyText as string) || '';
+        const responsesText = (payload.responsesText as string) || '';
+        
+        // 긴 텍스트는 잘라서 사용 (각각 최대 500자)
+        const truncateText = (text: string, maxLength: number) => {
+          if (text.length <= maxLength) return text;
+          return text.substring(0, maxLength) + '...';
+        };
+        
         return {
           endpoint: (payload.endpoint as string) || '',
           method: (payload.method as string) || '',
@@ -883,13 +1145,13 @@ export class SwaggerService {
           description: (payload.description as string) || '',
           tags: (payload.tags as string[]) || [],
           parameters: payload.parameters as SwaggerParameter[] | undefined,
-          parametersText: (payload.parametersText as string) || undefined,
+          parametersText: truncateText(parametersText, 500),
           requestBody: payload.requestBody as SwaggerRequestBody | undefined,
-          requestBodyText: (payload.requestBodyText as string) || undefined,
+          requestBodyText: truncateText(requestBodyText, 500),
           responses: payload.responses as
             | Record<string, SwaggerResponse>
             | undefined,
-          responsesText: (payload.responsesText as string) || undefined,
+          responsesText: truncateText(responsesText, 500),
           fullText: (payload.fullText as string) || '',
           swaggerKey: (payload.swaggerKey as string) || undefined,
           swaggerUrl: (payload.swaggerUrl as string) || undefined,
@@ -897,7 +1159,7 @@ export class SwaggerService {
       });
 
       this.logger.log(
-        `LLM 답변 생성 시작: ${results.length}개의 API 사용 (최고 점수: ${results[0]?.score?.toFixed(3) || 0})`,
+        `LLM 답변 생성 시작: ${contextApis.length}개의 API 사용 (전체 검색 결과: ${results.length}개, 최고 점수: ${results[0]?.score?.toFixed(3) || 0})`,
       );
 
       // 8. LLM을 사용하여 API 기반 답변 생성

@@ -22,8 +22,8 @@ export class SwaggerDocument {
   @Column({ unique: true })
   key: string; // 사용자 지정 키 (고유 식별자)
 
-  @Column()
-  swaggerUrl: string; // Swagger JSON URL
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  swaggerUrl: string | null; // Swagger JSON URL (파일 업로드의 경우 null)
 
   @Column({ type: 'varchar', length: 500, nullable: true })
   title: string | null; // Swagger 문서 제목 (info.title)
