@@ -6,6 +6,8 @@ import OpenAI from 'openai';
 export class OpenAIService {
   private readonly openai: OpenAI;
   private readonly logger = new Logger(OpenAIService.name);
+  private readonly chatModel: string;
+  private readonly queryRewriteModel: string;
 
   constructor(private configService: ConfigService) {
     const apiKey = this.configService.get<string>('OPENAI_API_KEY');
@@ -17,6 +19,17 @@ export class OpenAIService {
     this.openai = new OpenAI({
       apiKey: apiKey,
     });
+
+    // 모델 설정 (환경 변수로 오버라이드 가능, 기본값: gpt-4o-mini)
+    this.chatModel =
+      this.configService.get<string>('OPENAI_CHAT_MODEL') || 'gpt-4o-mini';
+    this.queryRewriteModel =
+      this.configService.get<string>('OPENAI_QUERY_REWRITE_MODEL') ||
+      'gpt-4o-mini'; // 쿼리 재작성은 더 가벼운 모델 사용
+
+    this.logger.log(
+      `OpenAI 모델 설정: Chat=${this.chatModel}, QueryRewrite=${this.queryRewriteModel}`,
+    );
   }
 
   async getEmbedding(text: string): Promise<{
@@ -112,7 +125,7 @@ ${historyText}
       }
 
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: this.queryRewriteModel,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
@@ -257,10 +270,10 @@ ${contextText}
       messages.push({ role: 'user', content: userPrompt });
 
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: this.chatModel,
         messages: messages,
         temperature: 0.3, // 일관성 있는 답변을 위해 낮은 temperature
-        max_tokens: 1000,
+        max_tokens: 2000, // 더 상세한 답변을 위해 토큰 증가
       });
 
       const answer = response.choices[0]?.message?.content || '';
@@ -350,144 +363,64 @@ ${api.swaggerUrl ? `\nSwagger URL: ${api.swaggerUrl}` : ''}
         })
         .join('\n\n---\n\n');
 
-      // 프론트엔드 개발자 관점의 Swagger API 가이드 프롬프트
-      const systemPrompt = `당신은 프론트엔드 개발자를 위한 API 구현 가이드를 제공하는 전문가입니다. 사용자의 요구사항을 파악하여 어떤 API를 사용해야 하는지, 어떻게 구현하면 좋을지 친절하고 실용적으로 설명합니다.
+      // 최적화된 시스템 프롬프트
+      const systemPrompt = `당신은 Swagger API 문서를 기반으로 사용자에게 정확하고 실용적인 API 가이드를 제공하는 전문가입니다.
 
-핵심 원칙:
-1. **요구사항 파악**: 사용자의 질문에서 실제로 구현하고자 하는 기능을 먼저 파악
-2. **실용적 가이드**: 코드가 아닌 말로 구현 방법과 흐름을 설명
-3. **API 추천**: 요구사항에 맞는 API를 찾아서 추천하고, 왜 그 API가 적합한지 설명
-4. **구현 흐름**: 여러 API를 조합해야 할 경우, 어떤 순서로 호출해야 하는지 단계별로 설명
-5. **주의사항**: 구현 시 주의해야 할 점이나 고려사항을 함께 안내
+**핵심 원칙:**
+1. **정확성**: 제공된 Swagger 문서의 정보만을 사용하며, 문서에 없는 내용은 추측하지 않습니다.
+2. **명확성**: 복잡한 개념도 단계별로 쉽게 이해할 수 있도록 설명합니다.
+3. **완전성**: API 사용에 필요한 모든 정보(인증, 파라미터, 요청/응답 형식, 에러 처리)를 포함합니다.
 
-답변 구조:
+**답변 구조:**
+1. **요구사항 분석**: 사용자의 질문을 분석하여 무엇을 구현하려는지 명확히 파악
+2. **API 추천 및 선택 근거**: 
+   - 제공된 API 중 어떤 것이 적합한지 설명
+   - 왜 이 API를 선택해야 하는지 논리적 근거 제시
+   - 여러 API가 필요한 경우 각각의 역할과 사용 순서 설명
+3. **구현 가이드**:
+   - 단계별 구현 흐름 (1, 2, 3...)
+   - 각 단계에서 필요한 작업과 이유
+4. **API 상세 정보**: 아래 형식 준수
 
-## 1. 요구사항 파악 및 추천 API
+**Swagger 데이터 표시 형식 (무조건 준수):**
 
-사용자의 질문을 분석하여:
-- 어떤 기능을 구현하려는지 파악
-- 그 기능을 구현하기 위해 필요한 API 추천
-- 각 API가 왜 필요한지 간단히 설명
+**파라미터 (Query, Path, Header):**
+- 파라미터가 있는 경우만 표시
+- 마크다운 테이블 형식: | 이름 | 타입 | 위치 | 필수 | 설명 |
 
-예시:
-"건강 검진 관련 기능을 구현하려면 다음 API들을 사용할 수 있습니다:
-- 건강 검진 목록 조회 API (GET /api/health-checkups)
-- 건강 검진 상세 조회 API (GET /api/health-checkups/{id})
-- 건강 검진 예약 API (POST /api/health-checkups/{id}/reserve)"
+**요청 본문 (Request Body):**
+- 요청 본문이 있는 경우만 표시
+- 마크다운 테이블 형식: | 필드명 | 타입 | 필수 | 설명 |
+- 중첩된 객체는 들여쓰기로 표현
+- 필요시 간단한 JSON 예시를 코드 블록(\`\`\`json)으로 제공
 
-## 2. 구현 방법 설명
+**응답 (Response):**
+- 성공 응답: 코드 블록(\`\`\`json)으로 응답 예시 제공
+- 에러 응답: 각 에러 코드별로 간략하게 설명 (400, 401, 404, 500 등)
 
-### 단계별 구현 흐름
+**인증 및 헤더:**
+- 인증이 필요한 경우 인증 방법 명시 (Bearer Token, API Key 등)
+- 필요한 헤더 정보 포함
 
-각 API를 언제, 어떤 순서로 호출해야 하는지 설명:
+**주의사항:**
+- Swagger 문서의 필드명, 타입, 제약조건을 정확히 유지
+- 문서에 없는 정보는 생략 가능함
+- 추측이나 일반적인 지식으로 정보를 보완하지 않음
+- 여러 API를 조합해야 하는 경우 각 API의 역할과 호출 순서를 명확히 설명`;
 
-예시:
-"건강 검진 목록을 보여주는 화면을 구현하려면:
-1. 먼저 건강 검진 목록 조회 API를 호출하여 사용 가능한 검진 목록을 가져옵니다
-2. 목록에서 사용자가 선택한 검진의 ID를 사용하여 상세 조회 API를 호출합니다
-3. 상세 정보를 확인한 후, 예약 API를 호출하여 검진을 예약합니다"
-
-### 각 API의 역할과 사용 시점
-
-- 언제 이 API를 호출해야 하는지
-- 어떤 데이터가 필요한지
-- 응답 데이터를 어떻게 활용해야 하는지
-
-## 3. API 상세 정보
-
-### [API 이름/기능]
-
-**엔드포인트**: \`METHOD /path\`
-
-**언제 사용하나요?**
-- 이 API를 호출해야 하는 상황과 시점
-
-**필요한 정보**
-- 요청에 포함해야 하는 파라미터나 데이터
-- 인증이 필요한지 여부
-
-**요청 예시**
-\`\`\`json
-{
-  "필드명": "설명"
-}
-\`\`\`
-
-**응답 예시**
-\`\`\`json
-{
-  "응답필드": "설명"
-}
-\`\`\`
-
-**응답 데이터 활용**
-- 받은 응답을 어떻게 처리하고 화면에 표시할지
-
-**주의사항**
-- 에러 처리 방법
-- 특별히 주의해야 할 점
-
-## 4. 구현 팁 및 주의사항
-
-- 여러 API를 조합할 때의 순서나 타이밍
-- 에러 처리 방법
-- 로딩 상태 관리
-- 사용자 경험을 위한 추가 고려사항
-
-답변 작성 규칙:
-- 서론 없이 바로 요구사항 파악부터 시작
-- 사용자가 프론트엔드 개발자라고 가정하고 답변
-- 코드 예시는 제공하지 않고, 말로 설명
-- API를 추천할 때는 왜 그 API가 필요한지 이유를 함께 설명
-- 구현 흐름을 단계별로 명확하게 설명
-- 제공된 API 정보에 없는 내용은 추가하지 않음
-- 정보가 없으면 "제공된 API 정보에는 이 내용이 없습니다."라고 명확히 안내
-- API 인용 시 실제 엔드포인트나 기능 설명을 사용
-  - 예: "건강 검진 목록 조회 API (GET /api/health-checkups)를 사용하면..."
-  - 예: "회원가입 API (POST /auth/register)를 호출하여..."
-- 친절하고 이해하기 쉽게 설명`;
-
-      const userPrompt = `다음은 벡터 검색으로 찾은 API 정보들입니다. **반드시 이 정보들만을 참고하여** 질문에 답변해주세요:
+      const userPrompt = `다음 Swagger API 문서를 참고하여 질문에 답변해주세요:
 
 ${contextText}
 
----
+**질문:** ${question}
 
-**질문**: ${question}
-
-**중요 지시사항**:
-1. 위에 제공된 API 정보들([API 1], [API 2] 등)을 **반드시 참고**하여 답변하세요
-2. 제공된 API 정보에 없는 내용은 절대 추가하지 마세요
-3. 각 API의 엔드포인트, 메서드, 경로, 파라미터, 요청 본문, 응답 형식 등을 **정확히** 참고하세요
-4. 사용자의 질문과 관련된 API를 찾아서 추천하고, 그 API의 실제 정보를 바탕으로 설명하세요
-
-**답변 구조**:
-
-1. **요구사항 파악**: 사용자가 구현하려는 기능이 무엇인지 파악하고 설명
-2. **추천 API**: 위 API 정보 중에서 질문과 관련된 API를 찾아 추천하고, 각 API가 왜 필요한지 설명
-   - **반드시 위에 제공된 API 정보([API 1], [API 2] 등)를 참고하여 추천하세요**
-   - 각 API의 실제 엔드포인트, 메서드, 경로를 정확히 언급하세요
-3. **구현 방법**: 어떤 순서로 API를 호출해야 하는지, 각 단계에서 무엇을 해야 하는지 설명
-4. **API 상세 정보**: 추천한 각 API에 대해:
-   - 엔드포인트와 메서드
-   - 필요한 파라미터나 요청 본문 (위 API 정보에서 확인)
-   - 응답 형식 (위 API 정보에서 확인)
-   - 응답 데이터를 어떻게 활용할지
-5. **구현 팁**: 주의사항이나 추가 고려사항
-
-**답변 작성 시 반드시 준수할 사항**:
-- **제공된 API 정보([API 1], [API 2] 등)의 내용만을 사용하세요**
-- 프론트엔드 개발자가 이해하기 쉽게 친절하게 설명
-- 코드 예시는 제공하지 않고, 말로 구현 방법을 설명
-- API를 추천할 때는 위 API 정보에서 찾은 실제 API를 언급하고, 왜 그 API가 필요한지 이유를 함께 설명
-- 구현 흐름을 단계별로 명확하게 설명
-- 마크다운 제목(##, ###)을 사용하여 섹션 구분
-- JSON 코드 블록은 json 태그만 사용 (요청/응답 예시용)
-- API 인용 시 실제 엔드포인트나 기능 설명을 사용
-  - 예: "건강 검진 목록 조회 API (GET /api/health-checkups)를 사용하면..."
-  - 예: "회원가입 API (POST /auth/register)를 호출하여..."
-- **제공된 API 정보에 없는 내용은 절대 추가하지 마세요**
-- 정보가 없으면 "제공된 API 정보에는 이 내용이 없습니다."라고 명확히 안내`;
+**답변 요구사항:**
+1. 위에 제공된 Swagger API 문서의 정보만을 사용하여 답변하세요.
+2. 사용자의 요구사항을 정확히 분석하고, 필요한 API를 추천하세요.
+3. 구현 방법을 단계별로 상세하게 설명하세요.
+4. 파라미터, 요청 본문, 응답 형식을 명확하게 표시하세요.
+5. 에러 처리 방법도 함께 설명하세요.
+6. 문서에 없는 정보는 추측하지 말고 "문서에 명시되지 않음"으로 표시하세요.`;
 
       // 대화 히스토리가 있으면 메시지에 포함
       const messages: Array<{
@@ -510,10 +443,10 @@ ${contextText}
       messages.push({ role: 'user', content: userPrompt });
 
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: this.chatModel,
         messages: messages,
         temperature: 0.3, // 일관성 있는 답변을 위해 낮은 temperature
-        max_tokens: 2000, // API 예시는 더 길 수 있으므로 토큰 증가
+        max_tokens: 4000, // 상세한 API 가이드와 예시를 위해 토큰 증가
       });
 
       const answer = response.choices[0]?.message?.content || '';

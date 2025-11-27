@@ -1120,8 +1120,8 @@ export class SwaggerService {
       }
 
       // 7. 검색된 API들을 LLM에 전달할 형식으로 변환
-      // 컨텍스트 길이 제한을 위해 상위 결과만 사용 (최대 5개)
-      const maxContextApis = 5;
+      // 컨텍스트 길이 제한을 위해 상위 결과만 사용 (최대 3개로 줄임)
+      const maxContextApis = 3;
       const limitedResults = results.slice(0, maxContextApis);
       
       const contextApis = limitedResults.map((result) => {
@@ -1131,11 +1131,15 @@ export class SwaggerService {
         const requestBodyText = (payload.requestBodyText as string) || '';
         const responsesText = (payload.responsesText as string) || '';
         
-        // 긴 텍스트는 잘라서 사용 (각각 최대 500자)
+        // 긴 텍스트는 잘라서 사용 (각각 최대 300자로 줄임)
         const truncateText = (text: string, maxLength: number) => {
           if (text.length <= maxLength) return text;
           return text.substring(0, maxLength) + '...';
         };
+        
+        // fullText도 압축 (최대 800자)
+        const fullText = (payload.fullText as string) || '';
+        const compressedFullText = truncateText(fullText, 800);
         
         return {
           endpoint: (payload.endpoint as string) || '',
@@ -1145,14 +1149,14 @@ export class SwaggerService {
           description: (payload.description as string) || '',
           tags: (payload.tags as string[]) || [],
           parameters: payload.parameters as SwaggerParameter[] | undefined,
-          parametersText: truncateText(parametersText, 500),
+          parametersText: truncateText(parametersText, 300),
           requestBody: payload.requestBody as SwaggerRequestBody | undefined,
-          requestBodyText: truncateText(requestBodyText, 500),
+          requestBodyText: truncateText(requestBodyText, 300),
           responses: payload.responses as
             | Record<string, SwaggerResponse>
             | undefined,
-          responsesText: truncateText(responsesText, 500),
-          fullText: (payload.fullText as string) || '',
+          responsesText: truncateText(responsesText, 300),
+          fullText: compressedFullText,
           swaggerKey: (payload.swaggerKey as string) || undefined,
           swaggerUrl: (payload.swaggerUrl as string) || undefined,
         };
