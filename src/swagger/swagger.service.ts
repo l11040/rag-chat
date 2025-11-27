@@ -605,5 +605,273 @@ export class SwaggerService {
       where: { id },
     });
   }
+
+  /**
+   * Swagger API에 대한 질문에 답변 생성
+   */
+  async query(
+    question: string,
+    conversationHistory?: Array<{
+      role: 'user' | 'assistant';
+      content: string;
+    }>,
+    swaggerKey?: string, // 특정 Swagger 문서만 검색하고 싶을 때
+  ): Promise<{
+    success: boolean;
+    answer: string;
+    sources: Array<{
+      endpoint: string;
+      method: string;
+      path: string;
+      score: number;
+      swaggerKey?: string;
+    }>;
+    question: string;
+    rewrittenQuery?: string;
+    usage?: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+    };
+    maxScore?: number;
+    threshold?: number;
+    error?: string;
+  }> {
+    try {
+      // 토큰 사용량 추적을 위한 변수 초기화
+      const totalUsage = {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      };
+
+      // 1. LLM을 사용하여 질문을 검색에 최적화된 쿼리로 재작성
+      this.logger.log(`원본 질문: "${question}"`);
+      const { rewrittenQuery, usage: rewriteUsage } =
+        await this.openaiService.rewriteQueryForSearch(
+          question,
+          conversationHistory,
+        );
+      this.logger.log(`재작성된 검색 쿼리: "${rewrittenQuery}"`);
+
+      // 토큰 사용량 합산
+      totalUsage.promptTokens += rewriteUsage.promptTokens;
+      totalUsage.completionTokens += rewriteUsage.completionTokens;
+      totalUsage.totalTokens += rewriteUsage.totalTokens;
+
+      // 2. 재작성된 쿼리에 대한 임베딩 생성
+      const { embedding, usage: embeddingUsage } =
+        await this.openaiService.getEmbedding(rewrittenQuery);
+
+      // 토큰 사용량 합산
+      totalUsage.promptTokens += embeddingUsage.promptTokens;
+      totalUsage.totalTokens += embeddingUsage.totalTokens;
+
+      // 3. Qdrant에서 유사한 API 검색
+      // 필터 설정 (특정 Swagger 문서만 검색하고 싶을 때)
+      const searchOptions: any = {
+        vector: embedding,
+        limit: 10, // 상위 10개 API 검색
+      };
+
+      // swaggerKey가 제공되면 필터 추가
+      if (swaggerKey) {
+        searchOptions.filter = {
+          must: [
+            {
+              key: 'swaggerKey',
+              match: { value: swaggerKey },
+            },
+            {
+              key: 'documentType',
+              match: { value: 'API' },
+            },
+          ],
+        };
+      } else {
+        // swaggerKey가 없으면 API 타입만 필터링
+        searchOptions.filter = {
+          must: [
+            {
+              key: 'documentType',
+              match: { value: 'API' },
+            },
+          ],
+        };
+      }
+
+      const searchResult = await this.qdrantService
+        .getClient()
+        .search(this.COLLECTION_NAME, searchOptions);
+
+      // 4. 검색 결과 포맷팅 및 스코어 필터링
+      const MIN_SCORE_THRESHOLD = 0.35; // 최소 유사도 점수
+      const allResults = (searchResult as any[] || []).map((item: any) => ({
+        id: item.id,
+        score: item.score,
+        payload: item.payload,
+      }));
+
+      // 최소 스코어 임계값 이상인 결과만 필터링
+      let results = allResults.filter(
+        (result) => result.score >= MIN_SCORE_THRESHOLD,
+      );
+
+      this.logger.log(
+        `검색 결과: 전체 ${allResults.length}개, 필터링 후 ${results.length}개 (임계값: ${MIN_SCORE_THRESHOLD})`,
+      );
+
+      // 5. 필터링 후 결과가 없으면 임계값을 낮춰서 재시도
+      if (results.length === 0 && allResults.length > 0) {
+        const maxScore = allResults[0].score;
+        // 최고 점수가 0.25 이상이면 임계값을 낮춰서 재시도
+        if (maxScore >= 0.25) {
+          const loweredThreshold = Math.max(0.25, maxScore - 0.05);
+          results = allResults.filter(
+            (result) => result.score >= loweredThreshold,
+          );
+          this.logger.log(
+            `임계값을 ${MIN_SCORE_THRESHOLD}에서 ${loweredThreshold.toFixed(3)}으로 낮춰서 재시도: ${results.length}개 결과 발견`,
+          );
+        }
+      }
+
+      // 6. 여전히 결과가 없으면 에러 반환
+      if (results.length === 0) {
+        const maxScore = allResults.length > 0 ? allResults[0].score : 0;
+        this.logger.warn(
+          `검색 결과가 없습니다. 최고 점수: ${maxScore.toFixed(4)}`,
+        );
+        return {
+          success: false,
+          answer:
+            '제공된 API 문서에는 이 질문에 대한 충분히 관련성 있는 정보가 없습니다.',
+          sources: [],
+          question,
+          rewrittenQuery,
+          maxScore: maxScore,
+          threshold: MIN_SCORE_THRESHOLD,
+        };
+      }
+
+      // 7. 검색된 API들을 LLM에 전달할 형식으로 변환
+      const contextApis = results.map((result) => ({
+        endpoint: (result.payload.endpoint as string) || '',
+        method: (result.payload.method as string) || '',
+        path: (result.payload.path as string) || '',
+        summary: (result.payload.summary as string) || '',
+        description: (result.payload.description as string) || '',
+        tags: (result.payload.tags as string[]) || [],
+        parameters: result.payload.parameters,
+        parametersText: (result.payload.parametersText as string) || undefined,
+        requestBody: result.payload.requestBody,
+        requestBodyText: (result.payload.requestBodyText as string) || undefined,
+        responses: result.payload.responses,
+        responsesText: (result.payload.responsesText as string) || undefined,
+        fullText: (result.payload.fullText as string) || '',
+        swaggerKey: (result.payload.swaggerKey as string) || undefined,
+        swaggerUrl: (result.payload.swaggerUrl as string) || undefined,
+      }));
+
+      this.logger.log(
+        `LLM 답변 생성 시작: ${results.length}개의 API 사용 (최고 점수: ${results[0].score.toFixed(3)})`,
+      );
+
+      // 8. LLM을 사용하여 API 기반 답변 생성
+      const { answer, usage: answerUsage } =
+        await this.openaiService.generateApiAnswer(
+          question,
+          contextApis,
+          conversationHistory,
+        );
+
+      // 토큰 사용량 합산
+      totalUsage.promptTokens += answerUsage.promptTokens;
+      totalUsage.completionTokens += answerUsage.completionTokens;
+      totalUsage.totalTokens += answerUsage.totalTokens;
+
+      // 9. 답변에서 실제로 사용된 API 인덱스 추출
+      const usedApiIndices = this.extractUsedApiIndices(answer);
+
+      // 10. 실제로 사용된 API만 필터링하여 반환
+      let sources: Array<{
+        endpoint: string;
+        method: string;
+        path: string;
+        score: number;
+        swaggerKey?: string;
+      }>;
+      if (usedApiIndices.size > 0) {
+        // 인용된 API가 있으면 해당 API만 반환
+        sources = results
+          .filter((_, index) => usedApiIndices.has(index + 1)) // API 번호는 1부터 시작
+          .map((result) => ({
+            endpoint: (result.payload.endpoint as string) || '',
+            method: (result.payload.method as string) || '',
+            path: (result.payload.path as string) || '',
+            score: result.score,
+            swaggerKey: (result.payload.swaggerKey as string) || undefined,
+          }));
+        this.logger.log(
+          `답변에 실제로 사용된 API: ${usedApiIndices.size}개 (전체 검색 결과: ${results.length}개)`,
+        );
+      } else {
+        // 인용이 없으면 상위 점수 API 3개만 반환
+        sources = results.slice(0, 3).map((result) => ({
+          endpoint: (result.payload.endpoint as string) || '',
+          method: (result.payload.method as string) || '',
+          path: (result.payload.path as string) || '',
+          score: result.score,
+          swaggerKey: (result.payload.swaggerKey as string) || undefined,
+        }));
+        this.logger.log(
+          `답변에서 API 인용을 찾을 수 없어 상위 3개 API를 반환합니다.`,
+        );
+      }
+
+      return {
+        success: true,
+        answer,
+        sources,
+        question,
+        rewrittenQuery,
+        usage: totalUsage,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to process API query: ${(error as Error).message}`,
+      );
+      return {
+        success: false,
+        answer: 'API 질문 답변 생성 중 오류가 발생했습니다.',
+        error: (error as Error).message,
+        sources: [],
+        question,
+      };
+    }
+  }
+
+  /**
+   * LLM 답변에서 실제로 사용된 API 번호 추출
+   * "[API 1]", "[API 2]" 같은 패턴을 찾아서 Set으로 반환
+   */
+  private extractUsedApiIndices(answer: string): Set<number> {
+    const usedIndices = new Set<number>();
+
+    // "[API N]" 패턴 찾기 (N은 숫자)
+    const apiPattern = /\[API\s*(\d+)\]/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = apiPattern.exec(answer)) !== null) {
+      if (match[1]) {
+        const apiIndex = parseInt(match[1], 10);
+        if (!isNaN(apiIndex)) {
+          usedIndices.add(apiIndex);
+        }
+      }
+    }
+
+    return usedIndices;
+  }
 }
 

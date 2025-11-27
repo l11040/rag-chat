@@ -283,4 +283,298 @@ ${contextText}
       throw error;
     }
   }
+
+  /**
+   * Swagger API 정보를 기반으로 질문에 답변 생성
+   * API 엔드포인트, 사용법, 테스트 데이터, 예시 등을 제공
+   */
+  async generateApiAnswer(
+    question: string,
+    contextApis: Array<{
+      endpoint: string;
+      method: string;
+      path: string;
+      summary: string;
+      description: string;
+      tags: string[];
+      parameters?: any;
+      parametersText?: string;
+      requestBody?: any;
+      requestBodyText?: string;
+      responses?: any;
+      responsesText?: string;
+      fullText: string;
+      swaggerKey?: string;
+      swaggerUrl?: string;
+    }>,
+    conversationHistory?: Array<{
+      role: 'user' | 'assistant';
+      content: string;
+    }>,
+  ): Promise<{
+    answer: string;
+    usage: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+    };
+  }> {
+    try {
+      // API 컨텍스트를 구조화된 형식으로 변환
+      const contextText = contextApis
+        .map(
+          (api, index) => `[API ${index + 1}]
+엔드포인트: ${api.endpoint}
+메서드: ${api.method}
+경로: ${api.path}
+요약: ${api.summary || '없음'}
+설명: ${api.description || '없음'}
+태그: ${api.tags?.join(', ') || '없음'}
+${api.parametersText ? `\n파라미터:\n${api.parametersText}` : ''}
+${api.requestBodyText ? `\n요청 본문:\n${api.requestBodyText}` : ''}
+${api.responsesText ? `\n응답:\n${api.responsesText}` : ''}
+${api.swaggerUrl ? `\nSwagger URL: ${api.swaggerUrl}` : ''}
+`,
+        )
+        .join('\n---\n\n');
+
+      // Swagger API 질문에 특화된 시스템 프롬프트
+      const systemPrompt = `당신은 Swagger API 문서를 기반으로 API 사용법을 안내하는 전문가입니다.
+
+핵심 원칙:
+1. **정확성**: 제공된 API 정보만을 사용하여 정확한 답변 제공
+2. **구조화**: 마크다운 형식으로 명확하게 구조화하여 전달
+3. **가독성**: 요청/응답/에러를 명확히 구분하여 표시
+4. **간결성**: 불필요한 코드 예시 없이 핵심 정보만 제공
+
+답변 형식 규칙 (반드시 준수):
+
+## API 사용법 질문의 경우
+
+### API 정보
+- **엔드포인트**: \`METHOD /path\`
+- **설명**: API의 목적과 기능
+
+### 요청 정보
+
+#### 파라미터
+| 이름 | 타입 | 위치 | 필수 | 설명 | 예시 |
+|------|------|------|------|------|------|
+| param1 | string | query | 예 | 파라미터 설명 | 예시값 |
+
+#### 헤더
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| Content-Type | string | 예 | application/json |
+| Authorization | string | 예 | Bearer {token} |
+
+#### 요청 본문
+\`\`\`json
+{
+  "field1": "값",
+  "field2": 123
+}
+\`\`\`
+
+**요청 본문 필드 설명:**
+- \`field1\` (string, 필수): 필드 설명
+- \`field2\` (number, 선택): 필드 설명
+
+### 응답 정보
+
+#### 성공 응답 (200 OK)
+\`\`\`json
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "name": "예시"
+  }
+}
+\`\`\`
+
+**응답 필드 설명:**
+- \`success\` (boolean): 요청 성공 여부
+- \`data.id\` (string): 생성된 리소스 ID
+- \`data.name\` (string): 리소스 이름
+
+#### 에러 응답
+
+**400 Bad Request**
+\`\`\`json
+{
+  "error": "잘못된 요청",
+  "message": "필수 필드가 누락되었습니다."
+}
+\`\`\`
+
+**404 Not Found**
+\`\`\`json
+{
+  "error": "리소스를 찾을 수 없음",
+  "message": "요청한 리소스가 존재하지 않습니다."
+}
+\`\`\`
+
+**500 Internal Server Error**
+\`\`\`json
+{
+  "error": "서버 오류",
+  "message": "서버에서 오류가 발생했습니다."
+}
+\`\`\`
+
+## 여러 API 조합 질문의 경우
+
+각 API를 단계별로 구분하여 표시:
+
+### 단계 1: [API 이름]
+[위의 형식으로 각 API 설명]
+
+### 단계 2: [API 이름]
+[위의 형식으로 각 API 설명]
+
+## 테스트 데이터 요청의 경우
+
+### 테스트 데이터
+\`\`\`json
+{
+  "field1": "실제 사용 가능한 값",
+  "field2": 123,
+  "field3": "2024-01-01T00:00:00Z"
+}
+\`\`\`
+
+**주의사항:**
+- 필수 필드는 반드시 포함
+- 실제 사용 가능한 형식의 값 사용 (유효한 UUID, 날짜 형식 등)
+
+## API 찾기 질문의 경우
+
+### 관련 API 목록
+
+1. **\`METHOD /path\`** - [요약]
+   - 설명: [설명]
+
+2. **\`METHOD /path\`** - [요약]
+   - 설명: [설명]
+
+답변 작성 필수 규칙:
+- 서론 없이 바로 답변 시작
+- 마크다운 제목(##, ###)을 사용하여 섹션 구분
+- 요청/응답/에러를 명확히 구분하여 표시
+- 표 형식을 적극 활용 (파라미터, 헤더, 필드 설명 등)
+- JSON 코드 블록은 json 태그만 사용
+- 실제 사용 가능한 값으로 예시 작성
+- 제공된 API 정보에 없는 내용은 절대 추가하지 않음
+- 정보가 없으면 "제공된 API 정보에는 이 내용이 없습니다."라고 명확히 안내
+- curl, JavaScript, Python 같은 코드 예시는 제공하지 않음
+- API 인용은 자연스럽게 문맥에 포함 (예: "회원가입 API(POST /auth/register)를 사용하면...")
+
+가독성 향상 팁:
+- 섹션을 명확히 구분 (### 요청 정보, ### 응답 정보)
+- 표를 사용하여 파라미터/헤더/필드 정보를 구조화
+- JSON 예시는 들여쓰기로 구조화
+- 응답과 에러를 별도 섹션으로 구분
+- 필드 설명은 요청 본문/응답 본문 아래에 별도로 표시`;
+
+      // 질문에서 의도 파악
+      const questionLower = question.toLowerCase();
+      const wantsHowTo =
+        questionLower.includes('어떻게') ||
+        questionLower.includes('방법') ||
+        questionLower.includes('사용');
+      const wantsTestData =
+        questionLower.includes('테스트') ||
+        questionLower.includes('예시 데이터') ||
+        questionLower.includes('샘플');
+      const wantsFindApi =
+        questionLower.includes('어떤') ||
+        questionLower.includes('찾') ||
+        questionLower.includes('있나') ||
+        questionLower.includes('api');
+
+      let answerGuidance = '';
+      if (wantsTestData) {
+        answerGuidance =
+          '\n\n중요: 테스트 데이터를 요청했으므로, ### 테스트 데이터 섹션을 만들고, 스키마에 맞는 유효한 JSON 형식을 코드 블록(json)으로 제공하세요. 필수 필드는 반드시 포함하고, 실제 사용 가능한 값으로 작성하세요.';
+      } else if (wantsHowTo) {
+        answerGuidance =
+          '\n\n중요: 사용법을 물어봤으므로, 반드시 다음 섹션 구조를 따라 답변하세요:\n- ### API 정보\n- ### 요청 정보 (파라미터 표, 헤더 표, 요청 본문 JSON, 필드 설명)\n- ### 응답 정보 (성공 응답 JSON, 응답 필드 설명, 에러 응답 JSON)\n각 섹션을 명확히 구분하고, 표와 JSON 코드 블록을 적극 활용하세요. curl, JavaScript, Python 같은 코드 예시는 제공하지 마세요.';
+      } else if (wantsFindApi) {
+        answerGuidance =
+          '\n\n중요: API 찾기를 요청했으므로, ### 관련 API 목록 섹션을 만들고, 각 API를 번호 리스트로 나열하세요. 각 API마다 엔드포인트(코드 형식), 요약, 설명을 포함하세요.';
+      } else {
+        // 기본 가이드
+        answerGuidance =
+          '\n\n중요: 답변은 반드시 마크다운 형식으로 구조화하세요. 요청 정보(파라미터 표, 헤더 표, 요청 본문 JSON, 필드 설명)와 응답 정보(성공/에러 응답 JSON, 필드 설명)를 명확히 구분하여 표시하세요. curl, JavaScript, Python 같은 코드 예시는 제공하지 마세요.';
+      }
+
+      const userPrompt = `다음 API 정보들을 참고하여 질문에 답변해주세요:
+
+${contextText}
+
+질문: ${question}
+
+위 API 정보들에 있는 내용만을 사용하여, 사용자의 의도에 맞게 정확하고 실용적인 답변을 제공하세요.${answerGuidance}
+
+답변 작성 시 반드시 준수할 사항:
+- 마크다운 제목(##, ###)을 사용하여 섹션 구분
+- 요청 정보와 응답 정보를 명확히 분리
+- 파라미터/헤더/필드는 표 형식으로 표시
+- JSON 코드 블록은 json 태그만 사용
+- 에러 응답은 별도 섹션으로 구분
+- API 인용은 자연스럽게 문맥에 포함 (예: "회원가입 API(POST /auth/register)를 사용하면...")
+- curl, JavaScript, Python 같은 코드 예시는 제공하지 않음
+- 불필요한 설명은 제거하고 핵심만 전달`;
+
+      // 대화 히스토리가 있으면 메시지에 포함
+      const messages: Array<{
+        role: 'system' | 'user' | 'assistant';
+        content: string;
+      }> = [{ role: 'system', content: systemPrompt }];
+
+      // 대화 히스토리 추가 (최근 5개만)
+      if (conversationHistory && conversationHistory.length > 0) {
+        const recentHistory = conversationHistory.slice(-5);
+        for (const msg of recentHistory) {
+          messages.push({
+            role: msg.role === 'user' ? 'user' : 'assistant',
+            content: msg.content,
+          });
+        }
+      }
+
+      // 현재 질문 추가
+      messages.push({ role: 'user', content: userPrompt });
+
+      const response = await this.openai.chat.completions.create({
+        model: 'gpt-3.5-turbo',
+        messages: messages,
+        temperature: 0.3, // 일관성 있는 답변을 위해 낮은 temperature
+        max_tokens: 2000, // API 예시는 더 길 수 있으므로 토큰 증가
+      });
+
+      const answer = response.choices[0]?.message?.content || '';
+      const usage = response.usage || {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+      };
+
+      return {
+        answer,
+        usage: {
+          promptTokens: usage.prompt_tokens,
+          completionTokens: usage.completion_tokens,
+          totalTokens: usage.total_tokens,
+        },
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to generate API answer: ${(error as Error).message}`,
+      );
+      throw error;
+    }
+  }
 }
