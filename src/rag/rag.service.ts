@@ -328,41 +328,61 @@ export class RagService {
   }
 
   /**
-   * LLM 답변에서 실제로 사용된 문서 번호 추출
-   * "[문서 1]", "[문서 2]" 같은 패턴을 찾아서 Set으로 반환
+   * LLM 답변에서 실제로 사용된 문서 제목 추출
+   * 답변에 언급된 문서 제목을 찾아서 Set으로 반환
    */
-  private extractUsedDocumentIndices(answer: string): Set<number> {
-    const usedIndices = new Set<number>();
+  private extractUsedDocumentTitles(
+    answer: string,
+    contextDocuments: Array<{
+      text: string;
+      pageTitle: string;
+      pageUrl: string;
+    }>,
+  ): Set<string> {
+    const usedTitles = new Set<string>();
 
-    // "[문서 N]" 패턴 찾기 (N은 숫자)
-    const documentPattern = /\[문서\s*(\d+)\]/g;
-    let match: RegExpExecArray | null;
+    // 각 문서의 제목을 답변에서 찾기
+    for (const doc of contextDocuments) {
+      const pageTitle = doc.pageTitle;
+      
+      if (!pageTitle || pageTitle === 'Unknown') {
+        continue;
+      }
 
-    while ((match = documentPattern.exec(answer)) !== null) {
-      if (match[1]) {
-        const docIndex = parseInt(match[1], 10);
-        if (!isNaN(docIndex)) {
-          usedIndices.add(docIndex);
+      // 답변에서 문서 제목 패턴 찾기
+      // 대소문자 구분 없이 검색하고, 부분 일치도 허용
+      const titleWords = pageTitle
+        .split(/\s+/)
+        .filter((word) => word.length > 2);
+
+      // 제목의 주요 단어들이 답변에 포함되어 있는지 확인
+      let matchCount = 0;
+      for (const word of titleWords) {
+        const regex = new RegExp(
+          word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+          'i',
+        );
+        if (regex.test(answer)) {
+          matchCount++;
         }
+      }
+
+      // 제목의 50% 이상 단어가 매치되면 사용된 것으로 간주
+      if (matchCount >= Math.ceil(titleWords.length * 0.5)) {
+        usedTitles.add(pageTitle);
+      }
+
+      // 전체 제목이 직접 언급된 경우도 확인
+      const fullTitleRegex = new RegExp(
+        pageTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        'i',
+      );
+      if (fullTitleRegex.test(answer)) {
+        usedTitles.add(pageTitle);
       }
     }
 
-    // 만약 인용이 하나도 없으면, 모든 문서를 사용한 것으로 간주 (하위 호환성)
-    // 하지만 실제로는 답변이 생성되었다는 것은 최소한 일부 문서가 사용되었다는 의미
-    // 따라서 인용이 없어도 답변이 생성되었다면, 상위 점수 문서들만 사용한 것으로 간주
-    if (usedIndices.size === 0) {
-      // 인용이 없으면 상위 3개 문서를 사용한 것으로 간주
-      // (실제로는 LLM이 인용 없이 답변을 생성했을 수 있으므로)
-      this.logger.warn(
-        '답변에서 문서 인용을 찾을 수 없습니다. 상위 문서들을 사용한 것으로 간주합니다.',
-      );
-      // 빈 Set을 반환하면 필터링에서 모든 문서가 제외되므로, 최소한 상위 문서는 포함
-      // 하지만 이 경우는 실제로 사용 여부를 알 수 없으므로, 모든 문서를 반환하지 않고
-      // 상위 점수 문서만 반환하는 것이 더 나을 수 있습니다.
-      // 일단 인용이 없으면 빈 Set을 반환하고, rag.service에서 처리하도록 합니다.
-    }
-
-    return usedIndices;
+    return usedTitles;
   }
 
   /**
@@ -602,8 +622,11 @@ export class RagService {
       totalUsage.completionTokens += answerUsage.completionTokens;
       totalUsage.totalTokens += answerUsage.totalTokens;
 
-      // 9. 답변에서 실제로 사용된 문서 인덱스 추출
-      const usedDocumentIndices = this.extractUsedDocumentIndices(answer);
+      // 9. 답변에서 실제로 사용된 문서 추출 (문서 제목 기반)
+      const usedDocumentTitles = this.extractUsedDocumentTitles(
+        answer,
+        contextDocuments,
+      );
 
       // 10. 실제로 사용된 문서만 필터링하여 반환
       let sources: Array<{
@@ -612,10 +635,13 @@ export class RagService {
         score: number;
         chunkText: string;
       }>;
-      if (usedDocumentIndices.size > 0) {
+      if (usedDocumentTitles.size > 0) {
         // 인용된 문서가 있으면 해당 문서만 반환
         sources = results
-          .filter((_, index) => usedDocumentIndices.has(index + 1)) // 문서 번호는 1부터 시작
+          .filter((result) => {
+            const pageTitle = (result.payload.pageTitle as string) || '';
+            return usedDocumentTitles.has(pageTitle);
+          })
           .map((result) => {
             const text = (result.payload.text as string) || '';
             return {
@@ -626,7 +652,7 @@ export class RagService {
             };
           });
         this.logger.log(
-          `답변에 실제로 사용된 문서: ${usedDocumentIndices.size}개 (전체 검색 결과: ${results.length}개)`,
+          `답변에 실제로 사용된 문서: ${usedDocumentTitles.size}개 (전체 검색 결과: ${results.length}개)`,
         );
       } else {
         // 인용이 없으면 상위 점수 문서 3개만 반환 (실제로 사용되었을 가능성이 높음)

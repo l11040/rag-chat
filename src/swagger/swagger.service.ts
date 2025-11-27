@@ -790,8 +790,11 @@ export class SwaggerService {
       totalUsage.completionTokens += answerUsage.completionTokens;
       totalUsage.totalTokens += answerUsage.totalTokens;
 
-      // 9. 답변에서 실제로 사용된 API 인덱스 추출
-      const usedApiIndices = this.extractUsedApiIndices(answer);
+      // 9. 답변에서 실제로 사용된 API 추출 (엔드포인트 기반)
+      const usedApiEndpoints = this.extractUsedApiEndpoints(
+        answer,
+        contextApis,
+      );
 
       // 10. 실제로 사용된 API만 필터링하여 반환
       let sources: Array<{
@@ -801,10 +804,13 @@ export class SwaggerService {
         score: number;
         swaggerKey?: string;
       }>;
-      if (usedApiIndices.size > 0) {
+      if (usedApiEndpoints.size > 0) {
         // 인용된 API가 있으면 해당 API만 반환
         sources = results
-          .filter((_, index) => usedApiIndices.has(index + 1)) // API 번호는 1부터 시작
+          .filter((result) => {
+            const endpoint = (result.payload.endpoint as string) || '';
+            return usedApiEndpoints.has(endpoint);
+          })
           .map((result) => ({
             endpoint: (result.payload.endpoint as string) || '',
             method: (result.payload.method as string) || '',
@@ -813,7 +819,7 @@ export class SwaggerService {
             swaggerKey: (result.payload.swaggerKey as string) || undefined,
           }));
         this.logger.log(
-          `답변에 실제로 사용된 API: ${usedApiIndices.size}개 (전체 검색 결과: ${results.length}개)`,
+          `답변에 실제로 사용된 API: ${usedApiEndpoints.size}개 (전체 검색 결과: ${results.length}개)`,
         );
       } else {
         // 인용이 없으면 상위 점수 API 3개만 반환
@@ -852,26 +858,55 @@ export class SwaggerService {
   }
 
   /**
-   * LLM 답변에서 실제로 사용된 API 번호 추출
-   * "[API 1]", "[API 2]" 같은 패턴을 찾아서 Set으로 반환
+   * LLM 답변에서 실제로 사용된 API 엔드포인트 추출
+   * 답변에 언급된 엔드포인트 패턴을 찾아서 Set으로 반환
    */
-  private extractUsedApiIndices(answer: string): Set<number> {
-    const usedIndices = new Set<number>();
+  private extractUsedApiEndpoints(
+    answer: string,
+    contextApis: Array<{
+      endpoint: string;
+      method: string;
+      path: string;
+      summary?: string;
+    }>,
+  ): Set<string> {
+    const usedEndpoints = new Set<string>();
 
-    // "[API N]" 패턴 찾기 (N은 숫자)
-    const apiPattern = /\[API\s*(\d+)\]/g;
-    let match: RegExpExecArray | null;
+    // 각 API의 엔드포인트, 메서드, 경로, 요약을 답변에서 찾기
+    for (const api of contextApis) {
+      const endpoint = api.endpoint; // 예: "POST /auth/register"
+      const method = api.method; // 예: "POST"
+      const path = api.path; // 예: "/auth/register"
+      const summary = api.summary || '';
 
-    while ((match = apiPattern.exec(answer)) !== null) {
-      if (match[1]) {
-        const apiIndex = parseInt(match[1], 10);
-        if (!isNaN(apiIndex)) {
-          usedIndices.add(apiIndex);
+      // 답변에서 엔드포인트 패턴 찾기
+      // 패턴 예시: "POST /auth/register", "'POST' /auth/register", "POST /auth/register API"
+      const patterns = [
+        endpoint, // 전체 엔드포인트
+        `'${method}' ${path}`, // 'POST' /auth/register 형식
+        `${method} ${path}`, // POST /auth/register 형식
+        path, // 경로만
+      ];
+
+      // 요약이 있으면 요약도 검색
+      if (summary) {
+        patterns.push(summary);
+      }
+
+      for (const pattern of patterns) {
+        // 대소문자 구분 없이 검색
+        const regex = new RegExp(
+          pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+          'i',
+        );
+        if (regex.test(answer)) {
+          usedEndpoints.add(endpoint);
+          break; // 하나라도 찾으면 다음 API로
         }
       }
     }
 
-    return usedIndices;
+    return usedEndpoints;
   }
 }
 

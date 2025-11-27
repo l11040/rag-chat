@@ -173,11 +173,11 @@ ${historyText}
     };
   }> {
     try {
-      // 문서 컨텍스트를 문자열로 변환
+      // 문서 컨텍스트를 문자열로 변환 (문서 제목을 식별자로 사용)
       const contextText = contextDocuments
         .map(
-          (doc, index) =>
-            `[문서 ${index + 1}]\n제목: ${doc.pageTitle}\nURL: ${doc.pageUrl}\n내용: ${doc.text}`,
+          (doc) =>
+            `[문서: ${doc.pageTitle}]\n제목: ${doc.pageTitle}\nURL: ${doc.pageUrl}\n내용: ${doc.text}`,
         )
         .join('\n\n---\n\n');
 
@@ -198,8 +198,10 @@ ${historyText}
 
 답변 작성 규칙:
 - 서론/결론 없이 바로 답변 시작
-- **중요**: 답변에 사용한 모든 문서는 반드시 "[문서 N]" 형식으로 명시적으로 인용해야 합니다
-- 여러 문서의 정보를 사용했다면 각각 "[문서 1]", "[문서 2]" 형식으로 인용하세요
+- **중요**: 답변에 사용한 모든 문서는 반드시 실제 문서 제목을 사용하여 인용해야 합니다
+- 예: "RAG 시스템 구현 가이드 문서에 따르면..." 또는 "인증 시스템 문서에서..."
+- 여러 문서의 정보를 사용했다면 각각 실제 문서 제목으로 인용하세요
+- "[문서 1]", "[문서 2]" 같은 번호 형식은 사용하지 마세요
 - 예시 요청 시: 1-2줄 간단한 설명 + 코드 블록(\`\`\`)으로 예시 제공
 - 방법 요청 시: 단계별 번호 리스트로 간결하게
 - 중복 설명 제거, 핵심만 전달
@@ -320,10 +322,15 @@ ${contextText}
     };
   }> {
     try {
-      // API 컨텍스트를 구조화된 형식으로 변환
+      // API 컨텍스트를 구조화된 형식으로 변환 (엔드포인트를 식별자로 사용)
       const contextText = contextApis
-        .map(
-          (api, index) => `[API ${index + 1}]
+        .map((api) => {
+          // API 식별자 생성: 엔드포인트 또는 기능 설명
+          const apiIdentifier = api.summary
+            ? `${api.summary} (${api.endpoint})`
+            : api.endpoint;
+
+          return `[API: ${apiIdentifier}]
 엔드포인트: ${api.endpoint}
 메서드: ${api.method}
 경로: ${api.path}
@@ -334,8 +341,8 @@ ${api.parametersText ? `\n파라미터:\n${api.parametersText}` : ''}
 ${api.requestBodyText ? `\n요청 본문:\n${api.requestBodyText}` : ''}
 ${api.responsesText ? `\n응답:\n${api.responsesText}` : ''}
 ${api.swaggerUrl ? `\nSwagger URL: ${api.swaggerUrl}` : ''}
-`,
-        )
+`;
+        })
         .join('\n---\n\n');
 
       // Swagger API 질문에 특화된 시스템 프롬프트
@@ -469,7 +476,12 @@ ${api.swaggerUrl ? `\nSwagger URL: ${api.swaggerUrl}` : ''}
 - 제공된 API 정보에 없는 내용은 절대 추가하지 않음
 - 정보가 없으면 "제공된 API 정보에는 이 내용이 없습니다."라고 명확히 안내
 - curl, JavaScript, Python 같은 코드 예시는 제공하지 않음
-- API 인용은 자연스럽게 문맥에 포함 (예: "회원가입 API(POST /auth/register)를 사용하면...")
+- **중요**: API 인용 시 "[API 1]", "[API 2]" 같은 번호 형식은 절대 사용하지 마세요
+- API 인용은 실제 엔드포인트나 기능 설명을 사용하세요
+  - 예: "'GET' /api/documents/{id} API를 사용하면..." 
+  - 예: "문서 조회 API('GET' /api/documents/{id})를 사용하면..."
+  - 예: "회원가입 API(POST /auth/register)를 사용하면..."
+  - API 요약이 있으면: "회원가입 API('POST' /auth/register)를 사용하면..."
 
 가독성 향상 팁:
 - 섹션을 명확히 구분 (### 요청 정보, ### 응답 정보)
@@ -524,7 +536,11 @@ ${contextText}
 - 파라미터/헤더/필드는 표 형식으로 표시
 - JSON 코드 블록은 json 태그만 사용
 - 에러 응답은 별도 섹션으로 구분
-- API 인용은 자연스럽게 문맥에 포함 (예: "회원가입 API(POST /auth/register)를 사용하면...")
+- **중요**: API 인용 시 "[API 1]", "[API 2]" 같은 번호 형식은 절대 사용하지 마세요
+- API 인용은 실제 엔드포인트나 기능 설명을 사용하세요
+  - 예: "'GET' /api/documents/{id} API를 사용하면..."
+  - 예: "문서 조회 API('GET' /api/documents/{id})를 사용하면..."
+  - API 요약이 있으면 요약과 엔드포인트를 함께 사용: "회원가입 API('POST' /auth/register)를 사용하면..."
 - curl, JavaScript, Python 같은 코드 예시는 제공하지 않음
 - 불필요한 설명은 제거하고 핵심만 전달`;
 
