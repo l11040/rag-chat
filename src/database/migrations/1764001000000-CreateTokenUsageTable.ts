@@ -7,9 +7,7 @@ import {
   TableIndex,
 } from 'typeorm';
 
-export class CreateTokenUsageTable1764001000000
-  implements MigrationInterface
-{
+export class CreateTokenUsageTable1764001000000 implements MigrationInterface {
   name = 'CreateTokenUsageTable1764001000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -155,7 +153,7 @@ export class CreateTokenUsageTable1764001000000
   public async down(queryRunner: QueryRunner): Promise<void> {
     // 외래키 먼저 삭제
     const tokenUsagesTable = await queryRunner.getTable('token_usages');
-    
+
     const messageForeignKey = tokenUsagesTable?.foreignKeys.find(
       (fk) => fk.columnNames.indexOf('messageId') !== -1,
     );
@@ -181,4 +179,3 @@ export class CreateTokenUsageTable1764001000000
     await queryRunner.dropTable('token_usages');
   }
 }
-

@@ -44,4 +44,3 @@ export class Message {
   @CreateDateColumn()
   createdAt: Date;
 }
-

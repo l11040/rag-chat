@@ -46,8 +46,18 @@ export class TokenUsageController {
   @ApiResponse({ status: 401, description: '인증 필요' })
   async getTokenUsage(
     @Request() req: { user: { id: string } },
-    @Query('limit', new DefaultValuePipe(undefined), new ParseIntPipe({ optional: true })) limit?: number,
-    @Query('offset', new DefaultValuePipe(undefined), new ParseIntPipe({ optional: true })) offset?: number,
+    @Query(
+      'limit',
+      new DefaultValuePipe(undefined),
+      new ParseIntPipe({ optional: true }),
+    )
+    limit?: number,
+    @Query(
+      'offset',
+      new DefaultValuePipe(undefined),
+      new ParseIntPipe({ optional: true }),
+    )
+    offset?: number,
   ) {
     const result = await this.tokenUsageService.getUserTokenUsage(
       req.user.id,
@@ -123,7 +133,10 @@ export class TokenUsageController {
     type: String,
     description: '종료 날짜 (ISO 8601 형식)',
   })
-  @ApiResponse({ status: 200, description: '날짜 범위별 토큰 사용량 조회 성공' })
+  @ApiResponse({
+    status: 200,
+    description: '날짜 범위별 토큰 사용량 조회 성공',
+  })
   @ApiResponse({ status: 401, description: '인증 필요' })
   async getTokenUsageByDateRange(
     @Request() req: { user: { id: string } },
@@ -186,4 +199,3 @@ export class TokenUsageController {
     };
   }
 }
-

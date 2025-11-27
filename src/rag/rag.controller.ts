@@ -79,7 +79,8 @@ class QueryDto {
 
   @ApiProperty({
     required: false,
-    description: '이전 대화 히스토리 (연속적인 대화를 위한 컨텍스트, conversationId가 있으면 무시됨)',
+    description:
+      '이전 대화 히스토리 (연속적인 대화를 위한 컨텍스트, conversationId가 있으면 무시됨)',
     type: [ConversationMessage],
   })
   @IsOptional()

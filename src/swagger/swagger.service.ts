@@ -15,11 +15,46 @@ interface SwaggerSpec {
     version?: string;
     description?: string;
   };
-  paths?: Record<string, Record<string, any>>;
+  paths?: Record<string, Record<string, SwaggerPathItem>>;
   tags?: Array<{ name: string; description?: string }>;
   components?: {
-    schemas?: Record<string, any>;
+    schemas?: Record<string, unknown>;
   };
+}
+
+interface SwaggerPathItem {
+  summary?: string;
+  description?: string;
+  tags?: string[];
+  operationId?: string;
+  parameters?: SwaggerParameter[];
+  requestBody?: SwaggerRequestBody;
+  responses?: Record<string, SwaggerResponse>;
+}
+
+interface SwaggerParameter {
+  name?: string;
+  in?: string;
+  required?: boolean;
+  schema?: unknown;
+  description?: string;
+  example?: unknown;
+}
+
+interface SwaggerRequestBody {
+  description?: string;
+  required?: boolean;
+  content?: Record<string, SwaggerContent>;
+}
+
+interface SwaggerContent {
+  schema?: unknown;
+  example?: unknown;
+}
+
+interface SwaggerResponse {
+  description?: string;
+  content?: Record<string, SwaggerContent>;
 }
 
 interface ApiInfo {
@@ -29,9 +64,31 @@ interface ApiInfo {
   description: string;
   tags: string[];
   operationId?: string;
-  parameters?: any[];
-  requestBody?: any;
-  responses?: any;
+  parameters?: SwaggerParameter[];
+  requestBody?: SwaggerRequestBody;
+  responses?: Record<string, SwaggerResponse>;
+}
+
+interface QdrantSearchResult {
+  id: string | number;
+  score: number;
+  payload: {
+    endpoint?: string;
+    method?: string;
+    path?: string;
+    summary?: string;
+    description?: string;
+    tags?: string[];
+    parameters?: unknown;
+    parametersText?: string;
+    requestBody?: unknown;
+    requestBodyText?: string;
+    responses?: unknown;
+    responsesText?: string;
+    fullText?: string;
+    swaggerKey?: string;
+    swaggerUrl?: string;
+  };
 }
 
 @Injectable()
@@ -54,9 +111,11 @@ export class SwaggerService {
     try {
       this.logger.log(`Fetching Swagger spec from: ${url}`);
       const response = await fetch(url);
-      
+
       if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unable to read error response');
+        const errorText = await response
+          .text()
+          .catch(() => 'Unable to read error response');
         this.logger.error(
           `Failed to fetch Swagger spec: ${response.status} ${response.statusText}. Response: ${errorText}`,
         );
@@ -64,16 +123,18 @@ export class SwaggerService {
           `Failed to fetch Swagger spec: ${response.status} ${response.statusText}`,
         );
       }
-      
+
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
         this.logger.warn(
           `Unexpected content-type: ${contentType}. Expected application/json`,
         );
       }
-      
-      const jsonData = await response.json();
-      this.logger.log(`Successfully fetched Swagger spec. Paths count: ${Object.keys(jsonData.paths || {}).length}`);
+
+      const jsonData = (await response.json()) as SwaggerSpec;
+      this.logger.log(
+        `Successfully fetched Swagger spec. Paths count: ${Object.keys(jsonData.paths || {}).length}`,
+      );
       return jsonData;
     } catch (error) {
       this.logger.error(
@@ -96,23 +157,30 @@ export class SwaggerService {
     for (const [path, methods] of Object.entries(spec.paths)) {
       for (const [method, details] of Object.entries(methods)) {
         if (
-          !['get', 'post', 'put', 'patch', 'delete', 'options', 'head'].includes(
-            method.toLowerCase(),
-          )
+          ![
+            'get',
+            'post',
+            'put',
+            'patch',
+            'delete',
+            'options',
+            'head',
+          ].includes(method.toLowerCase())
         ) {
           continue;
         }
 
+        const pathItem = details as unknown as SwaggerPathItem;
         const apiInfo: ApiInfo = {
           method: method.toUpperCase(),
           path,
-          summary: details.summary || '',
-          description: details.description || '',
-          tags: details.tags || [],
-          operationId: details.operationId,
-          parameters: details.parameters,
-          requestBody: details.requestBody,
-          responses: details.responses,
+          summary: pathItem.summary || '',
+          description: pathItem.description || '',
+          tags: pathItem.tags || [],
+          operationId: pathItem.operationId,
+          parameters: pathItem.parameters,
+          requestBody: pathItem.requestBody,
+          responses: pathItem.responses,
         };
 
         apis.push(apiInfo);
@@ -125,14 +193,18 @@ export class SwaggerService {
   /**
    * 스키마 정보를 텍스트로 변환합니다
    */
-  private schemaToText(schema: any, schemas?: Record<string, any>): string {
+  private schemaToText(
+    schema: unknown,
+    schemas?: Record<string, unknown>,
+  ): string {
     if (!schema) return '';
 
+    const schemaObj = schema as Record<string, unknown>;
     const parts: string[] = [];
 
     // $ref 참조 처리
-    if (schema.$ref) {
-      const refName = schema.$ref.split('/').pop();
+    if (schemaObj.$ref && typeof schemaObj.$ref === 'string') {
+      const refName = schemaObj.$ref.split('/').pop();
       if (schemas && refName && schemas[refName]) {
         return this.schemaToText(schemas[refName], schemas);
       }
@@ -140,36 +212,57 @@ export class SwaggerService {
     }
 
     // 타입 정보
-    if (schema.type) {
-      parts.push(`타입: ${schema.type}`);
+    if (schemaObj.type) {
+      const typeValue =
+        typeof schemaObj.type === 'string'
+          ? schemaObj.type
+          : typeof schemaObj.type === 'number'
+            ? String(schemaObj.type)
+            : JSON.stringify(schemaObj.type);
+      parts.push(`타입: ${typeValue}`);
     }
 
     // 포맷 정보
-    if (schema.format) {
-      parts.push(`포맷: ${schema.format}`);
+    if (schemaObj.format) {
+      const formatValue =
+        typeof schemaObj.format === 'string'
+          ? schemaObj.format
+          : typeof schemaObj.format === 'number'
+            ? String(schemaObj.format)
+            : JSON.stringify(schemaObj.format);
+      parts.push(`포맷: ${formatValue}`);
     }
 
     // 설명
-    if (schema.description) {
-      parts.push(`설명: ${schema.description}`);
+    if (schemaObj.description && typeof schemaObj.description === 'string') {
+      parts.push(`설명: ${schemaObj.description}`);
     }
 
     // 예시
-    if (schema.example !== undefined) {
-      parts.push(`예시: ${JSON.stringify(schema.example)}`);
+    if (schemaObj.example !== undefined) {
+      parts.push(`예시: ${JSON.stringify(schemaObj.example)}`);
     }
 
     // enum 값들
-    if (schema.enum) {
-      parts.push(`가능한 값: ${schema.enum.join(', ')}`);
+    if (Array.isArray(schemaObj.enum)) {
+      parts.push(`가능한 값: ${schemaObj.enum.join(', ')}`);
     }
 
     // 객체 속성
-    if (schema.properties) {
+    if (
+      schemaObj.properties &&
+      typeof schemaObj.properties === 'object' &&
+      !Array.isArray(schemaObj.properties)
+    ) {
       const props: string[] = [];
-      for (const [propName, propSchema] of Object.entries(schema.properties)) {
-        const propText = this.schemaToText(propSchema as any, schemas);
-        const required = schema.required?.includes(propName) ? '(필수)' : '(선택)';
+      const requiredArray = Array.isArray(schemaObj.required)
+        ? schemaObj.required
+        : [];
+      for (const [propName, propSchema] of Object.entries(
+        schemaObj.properties,
+      )) {
+        const propText = this.schemaToText(propSchema, schemas);
+        const required = requiredArray.includes(propName) ? '(필수)' : '(선택)';
         props.push(`  - ${propName} ${required}: ${propText}`);
       }
       if (props.length > 0) {
@@ -178,8 +271,8 @@ export class SwaggerService {
     }
 
     // 배열 아이템
-    if (schema.type === 'array' && schema.items) {
-      const itemText = this.schemaToText(schema.items, schemas);
+    if (schemaObj.type === 'array' && schemaObj.items) {
+      const itemText = this.schemaToText(schemaObj.items, schemas);
       parts.push(`배열 아이템: ${itemText}`);
     }
 
@@ -189,7 +282,7 @@ export class SwaggerService {
   /**
    * 파라미터 정보를 텍스트로 변환합니다
    */
-  private parametersToText(parameters: any[]): string {
+  private parametersToText(parameters: SwaggerParameter[]): string {
     if (!parameters || parameters.length === 0) {
       return '';
     }
@@ -197,7 +290,7 @@ export class SwaggerService {
     const parts: string[] = [];
     for (const param of parameters) {
       const paramParts: string[] = [];
-      paramParts.push(`- ${param.name || param.in}`);
+      paramParts.push(`- ${param.name || param.in || ''}`);
       if (param.in) {
         paramParts.push(`위치: ${param.in}`);
       }
@@ -225,7 +318,10 @@ export class SwaggerService {
   /**
    * 요청 본문 정보를 텍스트로 변환합니다
    */
-  private requestBodyToText(requestBody: any, schemas?: Record<string, any>): string {
+  private requestBodyToText(
+    requestBody: SwaggerRequestBody,
+    schemas?: Record<string, unknown>,
+  ): string {
     if (!requestBody) {
       return '';
     }
@@ -241,16 +337,18 @@ export class SwaggerService {
     }
 
     if (requestBody.content) {
-      for (const [contentType, content] of Object.entries(requestBody.content)) {
+      for (const [contentType, content] of Object.entries(
+        requestBody.content,
+      )) {
         parts.push(`Content-Type: ${contentType}`);
-        if ((content as any).schema) {
-          const schemaText = this.schemaToText((content as any).schema, schemas);
+        if (content.schema) {
+          const schemaText = this.schemaToText(content.schema, schemas);
           if (schemaText) {
             parts.push(`스키마:\n${schemaText}`);
           }
         }
-        if ((content as any).example) {
-          parts.push(`예시: ${JSON.stringify((content as any).example, null, 2)}`);
+        if (content.example !== undefined) {
+          parts.push(`예시: ${JSON.stringify(content.example, null, 2)}`);
         }
       }
     }
@@ -261,7 +359,10 @@ export class SwaggerService {
   /**
    * 응답 정보를 텍스트로 변환합니다
    */
-  private responsesToText(responses: any, schemas?: Record<string, any>): string {
+  private responsesToText(
+    responses: Record<string, SwaggerResponse>,
+    schemas?: Record<string, unknown>,
+  ): string {
     if (!responses) {
       return '';
     }
@@ -272,21 +373,23 @@ export class SwaggerService {
       const responseParts: string[] = [];
       responseParts.push(`응답 코드: ${statusCode}`);
 
-      if ((response as any).description) {
-        responseParts.push(`설명: ${(response as any).description}`);
+      if (response.description) {
+        responseParts.push(`설명: ${response.description}`);
       }
 
-      if ((response as any).content) {
-        for (const [contentType, content] of Object.entries((response as any).content)) {
+      if (response.content) {
+        for (const [contentType, content] of Object.entries(response.content)) {
           responseParts.push(`Content-Type: ${contentType}`);
-          if ((content as any).schema) {
-            const schemaText = this.schemaToText((content as any).schema, schemas);
+          if (content.schema) {
+            const schemaText = this.schemaToText(content.schema, schemas);
             if (schemaText) {
               responseParts.push(`스키마:\n${schemaText}`);
             }
           }
-          if ((content as any).example) {
-            responseParts.push(`예시: ${JSON.stringify((content as any).example, null, 2)}`);
+          if (content.example !== undefined) {
+            responseParts.push(
+              `예시: ${JSON.stringify(content.example, null, 2)}`,
+            );
           }
         }
       }
@@ -368,7 +471,9 @@ export class SwaggerService {
     swaggerDocument?: SwaggerDocument;
     apiCount?: number;
   }> {
-    this.logger.log(`Starting Swagger document upload: key=${key}, url=${swaggerUrl}`);
+    this.logger.log(
+      `Starting Swagger document upload: key=${key}, url=${swaggerUrl}`,
+    );
 
     try {
       // 1. 기존 Swagger 문서 확인 (키 기준)
@@ -435,7 +540,8 @@ export class SwaggerService {
           );
 
           // 임베딩 생성
-          const embeddingResult = await this.openaiService.getEmbedding(apiText);
+          const embeddingResult =
+            await this.openaiService.getEmbedding(apiText);
 
           // Qdrant 포인트 생성 (UUID 사용하여 안전한 ID 생성)
           const pointId = randomUUID();
@@ -518,14 +624,14 @@ export class SwaggerService {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
-      
+
       this.logger.error(
         `Error uploading Swagger document: ${errorMessage}`,
         errorStack,
       );
 
       // 에러 발생 시 DB 상태 업데이트
-      let swaggerDoc = await this.swaggerDocumentRepository.findOne({
+      const swaggerDoc = await this.swaggerDocumentRepository.findOne({
         where: { key },
       });
       if (swaggerDoc) {
@@ -669,7 +775,18 @@ export class SwaggerService {
 
       // 3. Qdrant에서 유사한 API 검색
       // 필터 설정 (특정 Swagger 문서만 검색하고 싶을 때)
-      const searchOptions: any = {
+      interface QdrantSearchOptions {
+        vector: number[];
+        limit: number;
+        filter?: {
+          must: Array<{
+            key: string;
+            match: { value: string };
+          }>;
+        };
+      }
+
+      const searchOptions: QdrantSearchOptions = {
         vector: embedding,
         limit: 10, // 상위 10개 API 검색
       };
@@ -702,11 +819,12 @@ export class SwaggerService {
 
       const searchResult = await this.qdrantService
         .getClient()
-        .search(this.COLLECTION_NAME, searchOptions);
+        .search(this.COLLECTION_NAME, searchOptions as never);
 
       // 4. 검색 결과 포맷팅 및 스코어 필터링
       const MIN_SCORE_THRESHOLD = 0.35; // 최소 유사도 점수
-      const allResults = (searchResult as any[] || []).map((item: any) => ({
+      const searchResults = (searchResult as QdrantSearchResult[]) || [];
+      const allResults = searchResults.map((item) => ({
         id: item.id,
         score: item.score,
         payload: item.payload,
@@ -755,26 +873,31 @@ export class SwaggerService {
       }
 
       // 7. 검색된 API들을 LLM에 전달할 형식으로 변환
-      const contextApis = results.map((result) => ({
-        endpoint: (result.payload.endpoint as string) || '',
-        method: (result.payload.method as string) || '',
-        path: (result.payload.path as string) || '',
-        summary: (result.payload.summary as string) || '',
-        description: (result.payload.description as string) || '',
-        tags: (result.payload.tags as string[]) || [],
-        parameters: result.payload.parameters,
-        parametersText: (result.payload.parametersText as string) || undefined,
-        requestBody: result.payload.requestBody,
-        requestBodyText: (result.payload.requestBodyText as string) || undefined,
-        responses: result.payload.responses,
-        responsesText: (result.payload.responsesText as string) || undefined,
-        fullText: (result.payload.fullText as string) || '',
-        swaggerKey: (result.payload.swaggerKey as string) || undefined,
-        swaggerUrl: (result.payload.swaggerUrl as string) || undefined,
-      }));
+      const contextApis = results.map((result) => {
+        const payload = result.payload;
+        return {
+          endpoint: (payload.endpoint as string) || '',
+          method: (payload.method as string) || '',
+          path: (payload.path as string) || '',
+          summary: (payload.summary as string) || '',
+          description: (payload.description as string) || '',
+          tags: (payload.tags as string[]) || [],
+          parameters: payload.parameters as SwaggerParameter[] | undefined,
+          parametersText: (payload.parametersText as string) || undefined,
+          requestBody: payload.requestBody as SwaggerRequestBody | undefined,
+          requestBodyText: (payload.requestBodyText as string) || undefined,
+          responses: payload.responses as
+            | Record<string, SwaggerResponse>
+            | undefined,
+          responsesText: (payload.responsesText as string) || undefined,
+          fullText: (payload.fullText as string) || '',
+          swaggerKey: (payload.swaggerKey as string) || undefined,
+          swaggerUrl: (payload.swaggerUrl as string) || undefined,
+        };
+      });
 
       this.logger.log(
-        `LLM 답변 생성 시작: ${results.length}개의 API 사용 (최고 점수: ${results[0].score.toFixed(3)})`,
+        `LLM 답변 생성 시작: ${results.length}개의 API 사용 (최고 점수: ${results[0]?.score?.toFixed(3) || 0})`,
       );
 
       // 8. LLM을 사용하여 API 기반 답변 생성
@@ -806,7 +929,7 @@ export class SwaggerService {
       }>;
       if (usedApiEndpoints.size > 0) {
         // 인용된 API가 있으면 해당 API만 반환
-        sources = results
+        sources = allResults
           .filter((result) => {
             const endpoint = (result.payload.endpoint as string) || '';
             return usedApiEndpoints.has(endpoint);
@@ -819,11 +942,11 @@ export class SwaggerService {
             swaggerKey: (result.payload.swaggerKey as string) || undefined,
           }));
         this.logger.log(
-          `답변에 실제로 사용된 API: ${usedApiEndpoints.size}개 (전체 검색 결과: ${results.length}개)`,
+          `답변에 실제로 사용된 API: ${usedApiEndpoints.size}개 (전체 검색 결과: ${allResults.length}개)`,
         );
       } else {
         // 인용이 없으면 상위 점수 API 3개만 반환
-        sources = results.slice(0, 3).map((result) => ({
+        sources = allResults.slice(0, 3).map((result) => ({
           endpoint: (result.payload.endpoint as string) || '',
           method: (result.payload.method as string) || '',
           path: (result.payload.path as string) || '',
@@ -909,4 +1032,3 @@ export class SwaggerService {
     return usedEndpoints;
   }
 }
-

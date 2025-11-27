@@ -151,4 +151,3 @@ export class ConversationService {
     return count > 0;
   }
 }
-

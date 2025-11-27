@@ -105,4 +105,3 @@ export class CreateSwaggerDocumentTable1764002000000
     await queryRunner.dropTable('swagger_documents');
   }
 }
-

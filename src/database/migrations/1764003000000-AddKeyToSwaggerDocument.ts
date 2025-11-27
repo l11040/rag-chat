@@ -1,9 +1,4 @@
-import {
-  MigrationInterface,
-  QueryRunner,
-  TableColumn,
-  TableIndex,
-} from 'typeorm';
+import { MigrationInterface, QueryRunner, TableColumn } from 'typeorm';
 
 export class AddKeyToSwaggerDocument1764003000000
   implements MigrationInterface
@@ -28,9 +23,9 @@ export class AddKeyToSwaggerDocument1764003000000
       );
 
       // 기존 데이터가 있으면 임시 키 생성
-      const existingDocs = await queryRunner.query(
+      const existingDocs = (await queryRunner.query(
         'SELECT id FROM swagger_documents',
-      );
+      )) as Array<{ id: string }>;
       for (const doc of existingDocs) {
         const tempKey = `swagger_${doc.id.substring(0, 8)}`;
         await queryRunner.query(
@@ -44,9 +39,9 @@ export class AddKeyToSwaggerDocument1764003000000
     const swaggerUrlColumn = table?.findColumnByName('swaggerUrl');
     if (swaggerUrlColumn?.isUnique) {
       // 인덱스 찾기
-      const indexes = await queryRunner.query(
+      const indexes = (await queryRunner.query(
         `SHOW INDEX FROM swagger_documents WHERE Column_name = 'swaggerUrl' AND Non_unique = 0`,
-      );
+      )) as Array<{ Key_name: string }>;
       for (const index of indexes) {
         await queryRunner.query(
           `ALTER TABLE swagger_documents DROP INDEX ${index.Key_name}`,
@@ -61,9 +56,9 @@ export class AddKeyToSwaggerDocument1764003000000
 
     if (keyColumn) {
       // unique 인덱스 제거
-      const indexes = await queryRunner.query(
+      const indexes = (await queryRunner.query(
         `SHOW INDEX FROM swagger_documents WHERE Column_name = 'key' AND Non_unique = 0`,
-      );
+      )) as Array<{ Key_name: string }>;
       for (const index of indexes) {
         await queryRunner.query(
           `ALTER TABLE swagger_documents DROP INDEX ${index.Key_name}`,
@@ -79,4 +74,3 @@ export class AddKeyToSwaggerDocument1764003000000
     );
   }
 }
-

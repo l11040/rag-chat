@@ -344,7 +344,7 @@ export class RagService {
     // 각 문서의 제목을 답변에서 찾기
     for (const doc of contextDocuments) {
       const pageTitle = doc.pageTitle;
-      
+
       if (!pageTitle || pageTitle === 'Unknown') {
         continue;
       }

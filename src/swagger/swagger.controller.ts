@@ -9,7 +9,6 @@ import {
   HttpCode,
   HttpStatus,
   Request,
-  Query as QueryParam,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -102,7 +101,8 @@ class ApiQueryDto {
 
   @ApiProperty({
     required: false,
-    description: '이전 대화 히스토리 (연속적인 대화를 위한 컨텍스트, conversationId가 있으면 무시됨)',
+    description:
+      '이전 대화 히스토리 (연속적인 대화를 위한 컨텍스트, conversationId가 있으면 무시됨)',
     type: [ConversationMessage],
   })
   @IsOptional()
@@ -225,9 +225,7 @@ export class SwaggerController {
           );
         } catch (error) {
           // 토큰 사용량 저장 실패는 로그만 남기고 계속 진행
-          console.error(
-            `토큰 사용량 저장 실패: ${(error as Error).message}`,
-          );
+          console.error(`토큰 사용량 저장 실패: ${(error as Error).message}`);
         }
       }
     }
@@ -264,7 +262,10 @@ export class SwaggerController {
     description: '권한 없음 (관리자만 접근 가능)',
   })
   async uploadSwaggerDocument(@Body() body: UploadSwaggerDto) {
-    return await this.swaggerService.uploadSwaggerDocument(body.key, body.swaggerUrl);
+    return await this.swaggerService.uploadSwaggerDocument(
+      body.key,
+      body.swaggerUrl,
+    );
   }
 
   @Get('documents')
@@ -330,8 +331,7 @@ export class SwaggerController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: '[관리자] Swagger 문서 삭제',
-    description:
-      'Swagger 문서와 관련된 모든 벡터 데이터를 삭제합니다.',
+    description: 'Swagger 문서와 관련된 모든 벡터 데이터를 삭제합니다.',
   })
   @ApiResponse({
     status: 200,
@@ -345,4 +345,3 @@ export class SwaggerController {
     return await this.swaggerService.deleteSwaggerDocument(id);
   }
 }
-

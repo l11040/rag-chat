@@ -180,7 +180,10 @@ export class CreateConversationAndMessageTables1764000000000
       (fk) => fk.columnNames.indexOf('userId') !== -1,
     );
     if (conversationsForeignKey) {
-      await queryRunner.dropForeignKey('conversations', conversationsForeignKey);
+      await queryRunner.dropForeignKey(
+        'conversations',
+        conversationsForeignKey,
+      );
     }
 
     // 테이블 삭제
@@ -188,4 +191,3 @@ export class CreateConversationAndMessageTables1764000000000
     await queryRunner.dropTable('conversations');
   }
 }
-

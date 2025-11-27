@@ -43,9 +43,7 @@ export class TokenUsageService {
       );
       return saved;
     } catch (error) {
-      this.logger.error(
-        `토큰 사용량 저장 실패: ${(error as Error).message}`,
-      );
+      this.logger.error(`토큰 사용량 저장 실패: ${(error as Error).message}`);
       throw error;
     }
   }
@@ -68,9 +66,7 @@ export class TokenUsageService {
 
       return { data, total };
     } catch (error) {
-      this.logger.error(
-        `토큰 사용량 조회 실패: ${(error as Error).message}`,
-      );
+      this.logger.error(`토큰 사용량 조회 실패: ${(error as Error).message}`);
       throw error;
     }
   }
@@ -93,7 +89,12 @@ export class TokenUsageService {
         .addSelect('SUM(token_usage.totalTokens)', 'totalTokens')
         .addSelect('COUNT(token_usage.id)', 'usageCount')
         .where('token_usage.userId = :userId', { userId })
-        .getRawOne();
+        .getRawOne<{
+          totalPromptTokens: string | null;
+          totalCompletionTokens: string | null;
+          totalTokens: string | null;
+          usageCount: string | null;
+        }>();
 
       const totalPromptTokens = parseInt(result?.totalPromptTokens || '0', 10);
       const totalCompletionTokens = parseInt(
@@ -188,4 +189,3 @@ export class TokenUsageService {
     }
   }
 }
-
