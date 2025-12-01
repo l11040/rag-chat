@@ -151,9 +151,9 @@ export class AuthController {
 
   @Get('users')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
+  @Roles(Role.SUB_ADMIN, Role.ADMIN)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: '모든 사용자 조회 (관리자 전용)' })
+  @ApiOperation({ summary: '모든 사용자 조회 (서브 관리자/관리자 전용)' })
   @ApiResponse({
     status: 200,
     description: '사용자 목록',

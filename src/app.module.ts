@@ -13,6 +13,7 @@ import { AuthModule } from './auth/auth.module';
 import { ConversationModule } from './conversation/conversation.module';
 import { TokenUsageModule } from './token-usage/token-usage.module';
 import { SwaggerModule } from './swagger/swagger.module';
+import { ProjectModule } from './project/project.module';
 import { getTypeOrmConfig } from './database/typeorm.config';
 
 @Module({
@@ -39,6 +40,7 @@ import { getTypeOrmConfig } from './database/typeorm.config';
     ConversationModule,
     TokenUsageModule,
     SwaggerModule,
+    ProjectModule,
   ],
   controllers: [AppController],
   providers: [

@@ -1,10 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { NotionService } from '../notion/notion.service';
 import { OpenAIService } from '../openai/openai.service';
 import { QdrantService } from '../qdrant/qdrant.service';
+import { ProjectService } from '../project/project.service';
 import {
   NotionPage as NotionPageEntity,
   IndexingStatus,
@@ -103,6 +104,7 @@ export class RagService {
     private readonly openaiService: OpenAIService,
     private readonly qdrantService: QdrantService,
     private readonly configService: ConfigService,
+    private readonly projectService: ProjectService,
     @InjectRepository(NotionPageEntity)
     private readonly notionPageRepository: Repository<NotionPageEntity>,
   ) {}
@@ -510,8 +512,40 @@ export class RagService {
       role: 'user' | 'assistant';
       content: string;
     }>,
+    projectId?: string,
+    userId?: string,
   ) {
     try {
+      // projectId는 필수
+      if (!projectId) {
+        throw new BadRequestException('프로젝트 ID는 필수입니다.');
+      }
+
+      if (!userId) {
+        throw new ForbiddenException('프로젝트 쿼리를 위해서는 사용자 인증이 필요합니다.');
+      }
+
+      // 사용자가 프로젝트 멤버인지 확인
+      const member = await this.projectService.getProjectMember(
+        projectId,
+        userId,
+      );
+      if (!member) {
+        throw new ForbiddenException('프로젝트에 접근할 권한이 없습니다.');
+      }
+
+      // 프로젝트에 속한 Notion 페이지 ID 목록 가져오기
+      const projectNotionPageIds =
+        await this.projectService.getProjectNotionPageIds(projectId);
+
+      // 프로젝트에 속한 Swagger 문서 키 목록 가져오기
+      const projectSwaggerDocumentKeys =
+        await this.projectService.getProjectSwaggerDocumentKeys(projectId);
+
+      this.logger.log(
+        `프로젝트 필터링: Notion 페이지 ${projectNotionPageIds.length}개, Swagger 문서 ${projectSwaggerDocumentKeys.length}개`,
+      );
+
       // 토큰 사용량 추적을 위한 변수 초기화
       const totalUsage = {
         promptTokens: 0,
@@ -541,11 +575,34 @@ export class RagService {
       totalUsage.promptTokens += embeddingUsage.promptTokens;
       totalUsage.totalTokens += embeddingUsage.totalTokens;
 
+      // 프로젝트에 문서가 없는 경우
+      if (projectNotionPageIds.length === 0) {
+        this.logger.warn(
+          `프로젝트 ${projectId}에 문서가 없습니다. 빈 결과를 반환합니다.`,
+        );
+        return {
+          success: false,
+          answer: '프로젝트에 문서가 없습니다. 프로젝트 관리자에게 문의하세요.',
+          sources: [],
+          rewrittenQuery,
+        };
+      }
+
+      // 3. Qdrant 검색 필터 설정 (프로젝트별 문서만 검색)
+      // Qdrant에서 여러 값을 필터링하려면 should를 사용해야 함
+      const searchFilter = {
+        should: projectNotionPageIds.map((pageId) => ({
+          key: 'pageId',
+          match: { value: pageId },
+        })),
+      };
+
       // 3. Qdrant에서 유사한 청크 검색 (상위 10개로 증가하여 더 많은 컨텍스트 확보)
       const searchResult = await this.qdrantService.search(
         this.COLLECTION_NAME,
         embedding,
         10, // limit을 5에서 10으로 증가
+        searchFilter,
       );
 
       // 3. 검색 결과 포맷팅 및 스코어 필터링

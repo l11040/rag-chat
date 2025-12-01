@@ -40,11 +40,44 @@ export class QdrantService implements OnModuleInit {
     });
   }
 
-  async search(collectionName: string, vector: number[], limit: number = 5) {
-    return await this.qdrantClient.search(collectionName, {
+  async search(
+    collectionName: string,
+    vector: number[],
+    limit: number = 5,
+    filter?: {
+      must?: Array<{
+        key: string;
+        match: { value: string };
+      }>;
+      should?: Array<{
+        key: string;
+        match: { value: string };
+      }>;
+    },
+  ) {
+    const searchOptions: {
+      vector: number[];
+      limit: number;
+      filter?: {
+        must?: Array<{
+          key: string;
+          match: { value: string };
+        }>;
+        should?: Array<{
+          key: string;
+          match: { value: string };
+        }>;
+      };
+    } = {
       vector: vector,
       limit: limit,
-    });
+    };
+
+    if (filter) {
+      searchOptions.filter = filter;
+    }
+
+    return await this.qdrantClient.search(collectionName, searchOptions as never);
   }
 
   async scrollPoints(collectionName: string, filter?: Record<string, any>) {

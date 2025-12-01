@@ -70,6 +70,13 @@ class QueryDto {
   question: string;
 
   @ApiProperty({
+    required: true,
+    description: '프로젝트 ID (프로젝트별 문서만 검색)',
+  })
+  @IsString()
+  projectId: string;
+
+  @ApiProperty({
     required: false,
     description: '대화 ID (기존 대화를 이어서 진행할 경우)',
   })
@@ -193,6 +200,8 @@ export class RagController {
     const result = await this.ragService.query(
       body.question,
       conversationHistory,
+      body.projectId,
+      req.user.id,
     );
 
     // 답변 메시지 저장
